@@ -26,6 +26,35 @@ Le dashboard est divisé en quatre modules principaux :
     - Ajustement des taux, des délais de paiement et des investissements.
     - Comparaison instantanée avec les prévisions actuelles.
 
+## 🧠 Logique Métier & Calculs Financiers
+
+Cette section détaille les concepts financiers et les formules de calcul utilisés dans l'application.
+
+### 1. Gestion de la Liquidité (Overview)
+- **Position de Cash Brute** : Somme de tous les soldes bancaires convertis en EUR.
+- **Surplus de Trésorerie** : Somme uniquement des soldes positifs. C'est la ressource disponible pour le placement.
+- **Risque de Découvert (Overdraft)** : Somme des soldes négatifs. Représente l'utilisation des lignes de crédit et génère des frais financiers.
+- **Conversion Devise (FX)** : Tous les calculs sont ramenés en EUR en utilisant les taux de change du jour (spot rates) stockés dans `daily_bank_conditions`.
+
+### 2. Analyse du BFR (Flux & Factures)
+Le dashboard calcule des indicateurs clés du Besoin en Fonds de Roulement (BFR) :
+- **DSO (Days Sales Outstanding)** : Délai moyen de paiement client.
+  - *Calcul* : `(Créances Clients * 30) / Chiffre d'Affaires du mois`.
+- **DPO (Days Payables Outstanding)** : Délai moyen de paiement fournisseur.
+  - *Calcul* : `(Dettes Fournisseurs * 30) / Achats du mois`.
+- **BFR Net** : `Créances Clients - Dettes Fournisseurs`.
+
+### 3. Simulation et Optimisation (Simulator)
+Le simulateur permet de projeter des décisions de trésorerie :
+- **Cash Pooling (ZBA - Zero Balance Account)** :
+  - Simulation de remontées de fonds (Sweeps) vers un compte pivot.
+  - Calcul automatique des frais de transfert SWIFT (appliqués sur les transferts transfrontaliers).
+- **Optimisation des Placements** :
+  - Comparaison des rendements sur différents instruments : Overnight (J+1), DAT (Dépôt à Terme) 1M/3M/6M.
+  - Prise en compte des **Cut-offs horaires** : L'application vérifie si l'heure limite de transaction bancaire est dépassée pour valider la faisabilité d'une opération le jour même.
+- **Calcul des Intérêts** :
+  - *Formule* : `Montant * Taux * (Nombre de jours / 365)`.
+
 ## 📁 Structure du Projet
 
 ```text
@@ -42,43 +71,22 @@ Le dashboard est divisé en quatre modules principaux :
 ## 🛠️ Technologies Utilisées
 
 - **Python 3.10+**
-- **Streamlit** : Framework pour l'interface utilisateur web.
-- **Pandas** : Manipulation et analyse de données.
-- **Openpyxl** : Lecture/Écriture des fichiers Excel.
-- **Plotly** : Visualisations de données interactives.
+- **Streamlit** : Interface utilisateur web.
+- **Pandas** : Moteur de calcul et manipulation de données.
+- **Openpyxl** : Interface avec la base de données Excel.
+- **Plotly** : Graphiques financiers interactifs.
 
-## ⚙️ Installation
+## ⚙️ Installation & Utilisation
 
-1.  **Cloner le dépôt** :
-    ```bash
-    git clone https://github.com/elgarneyoussef2-ui/cash_management.git
-    cd cash_management
-    ```
+1. **Installation** :
+   ```bash
+   pip install streamlit pandas openpyxl plotly
+   ```
 
-2.  **Créer un environnement virtuel** (recommandé) :
-    ```bash
-    python -m venv venv
-    source venv/bin/activate  # Sur Windows: venv\Scripts\activate
-    ```
-
-3.  **Installer les dépendances** :
-    ```bash
-    pip install streamlit pandas openpyxl plotly
-    ```
-
-## 📖 Utilisation
-
-Pour lancer le dashboard, exécutez la commande suivante à la racine du projet :
-
-```bash
-streamlit run dashboard.py
-```
-
-L'application sera accessible dans votre navigateur à l'adresse `http://localhost:8501`.
-
-## 📊 Données
-
-L'application utilise le fichier `treasury_master.xlsx` comme source de vérité. Assurez-vous que ce fichier est présent à la racine pour que le dashboard puisse charger les données.
+2. **Lancement** :
+   ```bash
+   streamlit run dashboard.py
+   ```
 
 ---
-*Treasury Dashboard v5.0 · Développé avec Streamlit & Excel*
+*Treasury Dashboard v5.0 · Expertise Trésorerie & Data*
