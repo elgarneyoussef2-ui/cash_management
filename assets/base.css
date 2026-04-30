@@ -1,0 +1,23 @@
+/* Sidebar + Streamlit header: completely removed */
+[data-testid="stSidebar"],
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="stSidebarNav"],
+[data-testid="collapsedControl"],
+[data-testid="stHeader"] { display: none !important; }
+
+/* Main fills full viewport */
+[data-testid="stAppViewContainer"] { display: flex !important; flex-direction: column !important; }
+[data-testid="stMain"] { flex: 1 1 auto !important; margin-left: 0 !important; width: 100% !important; overflow-x: hidden !important; }
+
+/* 76px = 60px fixed navbar + 16px gap */
+.block-container {
+    max-width: 100% !important; width: 100% !important; box-sizing: border-box !important;
+    padding-top: 76px !important; padding-bottom: 2rem !important;
+    padding-left: 3rem !important; padding-right: 3rem !important;
+}
+@media (min-width: 1600px) { .block-container { padding-left: 5rem !important; padding-right: 5rem !important; } }
+@media (max-width: 1024px) { .block-container { padding-left: 2rem !important; padding-right: 2rem !important; } }
+@media (max-width: 640px)  { .block-container { padding-left: 1rem !important; padding-right: 1rem !important; }
+                              [data-testid="column"] { width: 100% !important; flex: 1 1 100% !important; } }
+.stPlotlyChart { width: 100% !important; }
+.stApp { overflow-x: hidden; }
