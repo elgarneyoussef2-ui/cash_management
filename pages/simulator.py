@@ -1,5 +1,6 @@
 # pages/simulator.py — Simulateur de Trésorerie v2
-# 6 blocs structurés : Position → Devises → Pooling → Transferts → Placements → Scénarios
+# 5 blocs structurés : Position → Pooling → Transferts → Placements → Scénarios
+# Les soldes non-EUR sont toujours convertis en EUR au taux du jour avant simulation.
 # ──────────────────────────────────────────────────────────────────────────────
 
 import streamlit as st  # type: ignore
@@ -22,8 +23,6 @@ _NAVY   = "#0F172A"
 SWIFT_FEE_PCT   = 0.0001
 BASE_DAYS       = 365
 MIN_SURPLUS_EUR = 1_000
-FX_SPREAD_PCT   = 0.0008    # spread spot 8 bp
-FWD_COST_PCT    = 0.0015    # coût points terme annualisé
 
 _INSTR_KEYS = ["Overnight J+1", "DAT 1M", "DAT 3M", "DAT 6M", "Money Market Fund"]
 _INSTR_RATE_COLS = {
@@ -44,8 +43,7 @@ _INSTR_CUTOFF_COLS = {
     "DAT 6M":            "cutoff_overnight",
     "Money Market Fund": "cutoff_mmf",
 }
-_FX_COLS  = {"SEK": "fx_eur_sek", "PLN": "fx_eur_pln", "USD": "fx_eur_usd"}
-_CCY_FLAG = {"SEK": "🇸🇪", "PLN": "🇵🇱", "USD": "🇺🇸", "EUR": "🇪🇺"}
+_FX_COLS    = {"SEK": "fx_eur_sek", "PLN": "fx_eur_pln", "USD": "fx_eur_usd"}
 _SC_LETTERS = ["A", "B", "C"]
 
 _EMPTY_TD = pd.DataFrame(columns=[
@@ -315,6 +313,7 @@ def _render_bloc1(df_accounts: pd.DataFrame, df_neg: pd.DataFrame, now: datetime
     display_cols = ["Banque", "N° Compte", "Devise", "Solde local",
                     "Équiv. EUR", "Plafond dispo.", "Cut-off"]
 
+    # Carte : Position de départ
     st.dataframe(
         df_b1[display_cols].style
         .format({
@@ -332,144 +331,41 @@ def _render_bloc1(df_accounts: pd.DataFrame, df_neg: pd.DataFrame, now: datetime
     )
 
     c1, c2, c3 = st.columns(3)
+    # Carte : 💰 Total EUR disponible
     c1.metric("💰 Total EUR disponible", f"{total_eur:,.0f} €")
+    # Carte : 📈 Surplus plaçable
     c2.metric("📈 Surplus plaçable",     f"{surplus:,.0f} €")
+    # Carte : 📉 Overdraft à couvrir
     c3.metric("📉 Overdraft à couvrir",  f"{overdraft:,.0f} €")
-    st.markdown("---")
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# BLOC 2 — Gestion des devises
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _render_bloc2(df_accounts: pd.DataFrame, df_neg: pd.DataFrame,
-                  non_eur_ccys: list, now: datetime) -> None:
-    st.markdown(
-        _bloc_header_html(2, "Gestion des devises",
-                          " · ".join(non_eur_ccys)),
-        unsafe_allow_html=True,
-    )
-
-    col_main, col_expo = st.columns([2, 1])
-
-    with col_main:
-        for ccy in non_eur_ccys:
+    # FX conversion note — show rates used for non-EUR accounts
+    non_eur = df_accounts[df_accounts["currency"] != "EUR"]["currency"].unique()
+    if len(non_eur) > 0:
+        rate_parts = []
+        for ccy in non_eur:
             rate = _fx_rate_for(ccy, df_neg)
-            ccy_accounts = df_accounts[df_accounts["currency"] == ccy]
-            total_local  = float(ccy_accounts["book_balance"].sum()) if not ccy_accounts.empty else 0.0
-            total_eur    = _to_eur(total_local, ccy, rate)
-            spread_cost  = abs(total_eur) * FX_SPREAD_PCT
-            fwd_cost_ann = abs(total_eur) * FWD_COST_PCT
-
-            flag  = _CCY_FLAG.get(ccy, "💱")
-            sk_d  = f"fx_decision_{ccy}"
-            sk_fd = f"fx_fwd_date_{ccy}"
-            sk_fr = f"fx_fwd_rate_{ccy}"
-            if sk_d not in st.session_state:
-                st.session_state[sk_d] = "keep"
-
-            with st.container(border=True):
-                h1, h2 = st.columns([1, 3])
-                with h1:
-                    st.markdown(
-                        f"<div style='text-align:center;padding:8px;'>"
-                        f"<div style='font-size:28px;'>{flag}</div>"
-                        f"<div style='font-size:20px;font-weight:800;color:#0f172a;'>{ccy}</div>"
-                        f"<div style='font-size:13px;font-weight:600;color:{_BLUE};'>"
-                        f"{total_local:,.0f} {ccy}</div>"
-                        f"<div style='font-size:11px;color:#6b7280;'>≈ {total_eur:,.0f} €</div>"
-                        f"<div style='font-size:10px;color:#94a3b8;'>1 EUR = {rate:.4f} {ccy}</div>"
-                        f"</div>",
-                        unsafe_allow_html=True,
-                    )
-                with h2:
-                    decision = st.radio(
-                        f"Traitement {ccy}",
-                        options=["keep", "spot", "forward"],
-                        format_func=lambda x: {
-                            "keep":    f"Garder en {ccy}",
-                            "spot":    f"Convertir au spot - spread ≈ {spread_cost:,.0f} €",
-                            "forward": f"Couvrir à terme - coût ≈ {fwd_cost_ann:,.0f} €/an",
-                        }[x],
-                        index=["keep", "spot", "forward"].index(
-                            st.session_state.get(sk_d, "keep")),
-                        key=f"_radio_{ccy}",
-                        label_visibility="collapsed",
-                    )
-                    st.session_state[sk_d] = decision
-
-                    if decision == "forward":
-                        fc1, fc2 = st.columns(2)
-                        with fc1:
-                            st.date_input(
-                                "Échéance",
-                                key=sk_fd,
-                                help="Date de maturité du contrat à terme",
-                            )
-                        with fc2:
-                            st.number_input(
-                                "Taux terme cible",
-                                min_value=0.0,
-                                value=float(st.session_state.get(sk_fr, rate)),
-                                step=0.0001,
-                                format="%.4f",
-                                key=sk_fr,
-                                help=f"Taux terme cible EUR/{ccy}",
-                            )
-
-    with col_expo:
+            rate_parts.append(f"1 EUR = <strong>{rate:.4f} {ccy}</strong>")
         st.markdown(
-            "<div style='font-weight:700;font-size:12px;margin-bottom:12px;"
-            "padding-bottom:6px;border-bottom:1px solid #e2e8f0;'>"
-            "Exposition résiduelle au change</div>",
+            f'<div style="margin-top:8px;padding:8px 14px;background:#f0f9ff;border-left:3px solid #0ea5e9;'
+            f'border-radius:0 6px 6px 0;font-size:11.5px;color:#0369a1;">'
+            f'💱 <strong>Conversion automatique au taux du jour :</strong> '
+            + " &nbsp;·&nbsp; ".join(rate_parts) +
+            " — Les soldes en devises sont convertis en EUR avant toute simulation."
+            f"</div>",
             unsafe_allow_html=True,
         )
-        for ccy in non_eur_ccys:
-            rate = _fx_rate_for(ccy, df_neg)
-            ccy_accounts = df_accounts[df_accounts["currency"] == ccy]
-            total_local  = float(ccy_accounts["book_balance"].sum()) if not ccy_accounts.empty else 0.0
-            total_eur    = _to_eur(total_local, ccy, rate)
-            decision     = st.session_state.get(f"fx_decision_{ccy}", "keep")
-            exposed      = 0.0 if decision == "spot" else total_eur
-            sens_1pct    = abs(exposed) * 0.01
-            badge_map    = {
-                "keep":    ("#FF800022", "#FF8000", "Exposé"),
-                "spot":    ("#05855522", "#057A55", "Converti"),
-                "forward": ("#1A56DB22", "#1A56DB", "Couvert terme"),
-            }
-            bg, fg, lbl = badge_map.get(decision, ("#E2E8F022", "#64748b", "—"))
-
-            st.markdown(
-                f"<div style='margin-bottom:10px;padding:12px;background:white;"
-                f"border-radius:8px;border:1px solid #e2e8f0;'>"
-                f"<div style='font-weight:700;font-size:12px;margin-bottom:8px;'>"
-                f"{_CCY_FLAG.get(ccy, '')} {ccy}</div>"
-                f"<div style='display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px;'>"
-                f"<span style='color:#6b7280;'>Exposition résiduelle</span>"
-                f"<span style='font-weight:600;color:{_AMBER if exposed != 0 else _GREEN};'>"
-                f"{'Couverte' if exposed == 0 else f'{exposed:,.0f} €'}</span></div>"
-                f"<div style='display:flex;justify-content:space-between;font-size:11px;margin-bottom:8px;'>"
-                f"<span style='color:#6b7280;'>Sensibilité ±1%</span>"
-                f"<span style='font-weight:600;color:{_RED if sens_1pct > 0 else _GREEN};'>"
-                f"±{sens_1pct:,.0f} €</span></div>"
-                f"<span style='background:{bg};color:{fg};padding:2px 8px;"
-                f"border-radius:99px;font-size:10px;font-weight:700;'>{lbl}</span>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-
     st.markdown("---")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# BLOC 3 — Pooling
+# BLOC 2 — Pooling
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _render_bloc3(df_accounts: pd.DataFrame, df_main: pd.DataFrame,
                   acc_label_to_id: dict, acc_id_to_row: dict,
                   all_labels: list, now: datetime) -> bool:
     """Renders the pooling bloc. Returns True if Physical Pooling is selected."""
-    st.markdown(_bloc_header_html(3, "Type de pooling"), unsafe_allow_html=True)
+    st.markdown(_bloc_header_html(2, "Type de pooling"), unsafe_allow_html=True)
 
     pool_type = st.radio(
         "Mécanisme",
@@ -543,10 +439,15 @@ def _render_bloc3(df_accounts: pd.DataFrame, df_main: pd.DataFrame,
             fees   = float(td["Frais SWIFT"].sum())
             n_crs  = int(td["Type"].str.contains("cross").sum())
             m1, m2, m3, m4 = st.columns(4)
+            # Carte : Sweeps calculés
             m1.metric("Sweeps calculés",   len(td))
+            # Carte : Volume transféré
             m2.metric("Volume transféré",  f"{vol:,.0f} €")
+            # Carte : Frais SWIFT
             m3.metric("Frais SWIFT",       f"{fees:,.2f} €")
+            # Carte : Cross / Intra
             m4.metric("Cross / Intra",     f"{n_crs} / {len(td) - n_crs}")
+            # Carte : Flux de consolidation
             st.markdown(
                 _flow_map_html(td),
                 unsafe_allow_html=True,
@@ -582,10 +483,14 @@ def _render_bloc3(df_accounts: pd.DataFrame, df_main: pd.DataFrame,
             net_day   = eco_agios + rend_add
 
             n1, n2, n3, n4 = st.columns(4)
+            # Carte : Position nette compensée
             n1.metric("Position nette compensée",    f"{pos_nette:,.0f} €")
+            # Carte : Économie agios /jour
             n2.metric("Économie agios /jour",         f"{eco_agios:,.2f} €",
                       delta=f"{eco_agios * BASE_DAYS:,.0f} €/an")
+            # Carte : Rendement additionnel /jour
             n3.metric("Rendement additionnel /jour",  f"{rend_add:,.2f} €")
+            # Carte : Net impact /jour
             n4.metric("Net impact /jour",             f"{net_day:,.2f} €",
                       delta=f"{net_day * BASE_DAYS:,.0f} €/an")
 
@@ -597,7 +502,7 @@ def _render_bloc3(df_accounts: pd.DataFrame, df_main: pd.DataFrame,
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# BLOC 4 — Transferts inter-banques
+# BLOC 3 — Transferts inter-banques
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _render_bloc4(df_main: pd.DataFrame, now: datetime) -> None:
@@ -605,7 +510,7 @@ def _render_bloc4(df_main: pd.DataFrame, now: datetime) -> None:
     td     = st.session_state.get("transfer_data", _EMPTY_TD.copy())
 
     st.markdown(
-        _bloc_header_html(4, "Transferts inter-banques",
+        _bloc_header_html(3, "Transferts inter-banques",
                           "Pré-rempli Physical Pooling" if (not is_zba and not td.empty) else "Notional — aucun mouvement"),
         unsafe_allow_html=True,
     )
@@ -688,6 +593,7 @@ def _render_bloc4(df_main: pd.DataFrame, now: datetime) -> None:
             "letter-spacing:.06em;color:#94a3b8;margin:12px 0 8px;'>Soldes après transferts</div>",
             unsafe_allow_html=True,
         )
+        # Carte : Soldes après transferts
         cols = st.columns(min(4, len(post_bal)))
         for i, (bank, bal) in enumerate(post_bal.items()):
             color = _RED if bal < 0 else (_AMBER if bal < 500_000 else _GREEN)
@@ -705,7 +611,7 @@ def _render_bloc4(df_main: pd.DataFrame, now: datetime) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# BLOC 5 — Placements
+# BLOC 4 — Placements
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _render_bloc5(df_accounts: pd.DataFrame, df_main: pd.DataFrame,
@@ -715,7 +621,7 @@ def _render_bloc5(df_accounts: pd.DataFrame, df_main: pd.DataFrame,
                   tax_rate: float, now: datetime) -> list:
     is_zba = st.session_state.get("pool_type_label", "ZBA") == "ZBA"
 
-    st.markdown(_bloc_header_html(5, "Placements"), unsafe_allow_html=True)
+    st.markdown(_bloc_header_html(4, "Placements"), unsafe_allow_html=True)
 
     placement_rows: list[dict] = []
 
@@ -746,8 +652,11 @@ def _render_bloc5(df_accounts: pd.DataFrame, df_main: pd.DataFrame,
 
         st.caption(f"Compte pivot : **{master_label or pivot_bank}**")
         pm1, pm2, pm3 = st.columns(3)
+        # Carte : Solde post-sweeps
         pm1.metric("Solde post-sweeps", f"{post_pivot:,.0f} €")
+        # Carte : Réserve J+1
         pm2.metric("Réserve J+1",        f"{out_j1_pivot:,.0f} €")
+        # Carte : Surplus plaçable
         pm3.metric("Surplus plaçable",   f"{surplus:,.0f} €")
 
         if surplus < min_inv:
@@ -800,11 +709,13 @@ def _render_bloc5(df_accounts: pd.DataFrame, df_main: pd.DataFrame,
                         label_visibility="collapsed",
                     )
                 with ci1:
+                    # Carte : Taux annuel
                     ci1.metric("Taux annuel", f"{taux:.3%}")
                 with ci3:
                     if amt > 0 and avail:
                         brut = amt * taux * dur / BASE_DAYS
                         net  = brut * (1 - tax_rate)
+                        # Carte : Revenu net
                         ci3.metric("Revenu net", f"{net:,.2f} €")
                     elif not avail:
                         ci3.warning("Cut-off dépassé")
@@ -989,12 +900,13 @@ def _render_bloc5(df_accounts: pd.DataFrame, df_main: pd.DataFrame,
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# BLOC 6 — Comparaison de scénarios
+# BLOC 5 — Comparaison de scénarios
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _render_bloc6(df_placements: pd.DataFrame, total_net_pos: float,
-                  df_f_j1: pd.DataFrame, df_f_j2: pd.DataFrame, now: datetime) -> None:
-    st.markdown(_bloc_header_html(6, "Comparaison de scénarios"), unsafe_allow_html=True)
+                  df_f_j1: pd.DataFrame, df_f_j2: pd.DataFrame, now: datetime,
+                  df_accounts: pd.DataFrame = None) -> None:
+    st.markdown(_bloc_header_html(5, "Comparaison de scénarios"), unsafe_allow_html=True)
 
     # Snapshot buttons (A, B, C)
     cols = st.columns(3)
@@ -1010,11 +922,12 @@ def _render_bloc6(df_placements: pd.DataFrame, total_net_pos: float,
                 disabled=already,
             ):
                 st.session_state[key] = {
-                    "pool_type":   st.session_state.get("pool_type_label", "—"),
-                    "transfers":   st.session_state.get("transfer_data", _EMPTY_TD.copy()).copy(),
-                    "placements":  df_placements.copy(),
-                    "net_position": total_net_pos,
-                    "timestamp":   now,
+                    "pool_type":        st.session_state.get("pool_type_label", "—"),
+                    "transfers":        st.session_state.get("transfer_data", _EMPTY_TD.copy()).copy(),
+                    "placements":       df_placements.copy(),
+                    "net_position":     total_net_pos,
+                    "timestamp":        now,
+                    "accounts_snapshot": df_accounts.copy() if df_accounts is not None else pd.DataFrame(),
                 }
                 st.toast(f"✅ Scénario {letter} sauvegardé !")
                 st.rerun()
@@ -1037,7 +950,7 @@ def _render_bloc6(df_placements: pd.DataFrame, total_net_pos: float,
     }
     if not saved_scs:
         st.info(
-            "Configurez les blocs 2 à 5, puis cliquez sur **Snapshot → Scénario A** "
+            "Configurez les blocs 2 à 4, puis cliquez sur **Snapshot → Scénario A** "
             "pour commencer la comparaison."
         )
         st.markdown("---")
@@ -1085,6 +998,7 @@ def _render_bloc6(df_placements: pd.DataFrame, total_net_pos: float,
         comp_rows.append(row)
 
     df_comp = pd.DataFrame(comp_rows)
+    # Carte : Comparaison de scénarios
     st.dataframe(df_comp, use_container_width=True, hide_index=True)
 
     # Recommendation
@@ -1136,28 +1050,28 @@ def _render_fiche(df_f_j1: pd.DataFrame, df_f_j2: pd.DataFrame,
         )
         st.markdown("---")
 
-        # ── I. Conversions de change ──────────────────────────────────────────
+        # ── I. Conversions de change automatiques ────────────────────────────
         st.markdown("##### I. Conversions de change")
-        fx_ops = []
-        for ccy in ("SEK", "PLN", "USD"):
-            dec = st.session_state.get(f"fx_decision_{ccy}", "keep")
-            if dec == "spot":
-                fx_ops.append(
-                    f"**Vendre {ccy} → EUR au spot** — "
-                    f"Spread estimé : {FX_SPREAD_PCT*100:.2f}%"
-                )
-            elif dec == "forward":
-                fwd_date = st.session_state.get(f"fx_fwd_date_{ccy}", "À définir")
-                fwd_rate = st.session_state.get(f"fx_fwd_rate_{ccy}", "À négocier")
-                fx_ops.append(
-                    f"**Couvrir {ccy} à terme** — "
-                    f"Taux cible : {fwd_rate} EUR/{ccy} · Échéance : {fwd_date}"
-                )
-        if not fx_ops:
-            st.write("*Aucune conversion — toutes les devises conservées*")
-        else:
-            for i, op in enumerate(fx_ops, 1):
-                st.markdown(f"{i}. {op}")
+        st.info(
+            "Les soldes en devises étrangères sont **automatiquement convertis en EUR** "
+            "au taux de change du jour de la banque émettrice, avant tout transfert ou placement."
+        )
+        # Show rates used for each non-EUR account in the snapshot
+        sc_accounts = sc.get("accounts_snapshot", pd.DataFrame())
+        if not sc_accounts.empty:
+            non_eur_rows = sc_accounts[sc_accounts["currency"] != "EUR"]
+            if not non_eur_rows.empty:
+                fx_lines = []
+                for _, r in non_eur_rows.iterrows():
+                    local = float(r.get("book_balance", 0) or 0)
+                    eur   = float(r.get("balance_eur",  0) or 0)
+                    rate  = local / eur if eur != 0 else 0.0
+                    fx_lines.append(
+                        f"- **{r['bank_name']} — {r['account_number']}** : "
+                        f"{local:,.0f} {r['currency']} → **{eur:,.0f} €** "
+                        f"(taux : 1 EUR = {rate:.4f} {r['currency']})"
+                    )
+                st.markdown("\n".join(fx_lines))
 
         # ── II. Transferts inter-banques ──────────────────────────────────────
         st.markdown("##### II. Transferts inter-banques")
@@ -1193,30 +1107,22 @@ def _render_fiche(df_f_j1: pd.DataFrame, df_f_j2: pd.DataFrame,
 
         # ── IV. Couvertures ───────────────────────────────────────────────────
         st.markdown("##### IV. Couvertures à terme")
-        hedges = []
-        for ccy in ("SEK", "PLN", "USD"):
-            if st.session_state.get(f"fx_decision_{ccy}") == "forward":
-                fwd_date = st.session_state.get(f"fx_fwd_date_{ccy}", "À définir")
-                fwd_rate = st.session_state.get(f"fx_fwd_rate_{ccy}", "—")
-                hedges.append(
-                    f"**Change à terme {ccy}/EUR** — "
-                    f"Taux : {fwd_rate} · Échéance : {fwd_date}"
-                )
-        if not hedges:
-            st.write("*Aucune couverture à terme configurée*")
-        else:
-            for i, h in enumerate(hedges, 1):
-                st.markdown(f"{i}. {h}")
+        st.write("*Aucune couverture à terme — conversion systématique au cours du jour.*")
 
         # ── Synthèse ──────────────────────────────────────────────────────────
         st.markdown("---")
         st.markdown("##### Synthèse")
         r1, r2, r3 = st.columns(3)
+        # Carte : Revenu net total
         r1.metric("Revenu net total",      f"{sc_met['net_income']:,.2f} €")
+        # Carte : Net après frais
         r2.metric("Net après frais",       f"{sc_met['net_impact']:,.2f} €")
+        # Carte : Taux moyen pondéré
         r3.metric("Taux moyen pondéré",    f"{sc_met['wav_rate']:.4%}")
         s1, s2 = st.columns(2)
+        # Carte : Coût transferts
         s1.metric("Coût transferts",       f"{sc_met['transfer_cost']:,.2f} €")
+        # Carte : Liquidité résiduelle J+1
         s2.metric("Liquidité résiduelle J+1", f"{sc_met['residual_j1']:,.0f} €")
 
         # Export CSV
@@ -1340,12 +1246,7 @@ def render(now: datetime) -> None:
     # ── Bloc 1 ───────────────────────────────────────────────────────────────
     _render_bloc1(df_accounts, df_neg, now, total_net_pos, total_surplus, total_od)
 
-    # ── Bloc 2 (devises) ─────────────────────────────────────────────────────
-    non_eur_ccys = sorted(set(df_accounts["currency"].unique()) - {"EUR"})
-    if non_eur_ccys:
-        _render_bloc2(df_accounts, df_neg, non_eur_ccys, now)
-
-    # ── Bloc 3 (pooling) ─────────────────────────────────────────────────────
+    # ── Bloc 2 (pooling) ─────────────────────────────────────────────────────
     _render_bloc3(df_accounts, df_main, acc_label_to_id, acc_id_to_row, all_labels, now)
 
     # ── Bloc 4 (transferts) ──────────────────────────────────────────────────
@@ -1365,7 +1266,7 @@ def render(now: datetime) -> None:
     st.session_state["placement_data"] = df_placements
 
     # ── Bloc 6 (scénarios) ───────────────────────────────────────────────────
-    _render_bloc6(df_placements, total_net_pos, df_f_j1, df_f_j2, now)
+    _render_bloc6(df_placements, total_net_pos, df_f_j1, df_f_j2, now, df_accounts)
 
     # ── Fiche d'instruction ───────────────────────────────────────────────────
     _render_fiche(df_f_j1, df_f_j2, now)

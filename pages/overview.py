@@ -168,8 +168,14 @@ def _render_welcome_banner(now):
         <div style="font-size:0.78rem;color:#64748B;margin-top:2px">Vue consolidée au {now.strftime('%d %B %Y')}</div>
       </div>
       <div style="display:flex;gap:20px;text-align:center">
-        <div><div style="font-size:0.6rem;font-weight:700;color:#9CA3AF">COMPTES</div><div style="font-size:1.2rem;font-weight:800;color:#1A56DB">{n_acc}</div></div>
-        <div><div style="font-size:0.6rem;font-weight:700;color:#9CA3AF">BANQUES</div><div style="font-size:1.2rem;font-weight:800;color:#1A56DB">{n_bnk}</div></div>
+        <div>
+          # Carte : COMPTES
+          <div style="font-size:0.6rem;font-weight:700;color:#9CA3AF">COMPTES</div><div style="font-size:1.2rem;font-weight:800;color:#1A56DB">{n_acc}</div>
+        </div>
+        <div>
+          # Carte : BANQUES
+          <div style="font-size:0.6rem;font-weight:700;color:#9CA3AF">BANQUES</div><div style="font-size:1.2rem;font-weight:800;color:#1A56DB">{n_bnk}</div>
+        </div>
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -180,6 +186,7 @@ def _render_kpi_cards(m):
     
     # Carte 1 : Liquidité Totale
     with c1:
+        # Carte : LIQUIDITÉ CONSOLIDÉE
         bars_html = "".join([
             _render_pbar(curr, data["balance_eur"], m["total"], BLUE, data["book_balance"], curr)
             for curr, data in sorted(m["by_currency"].items(), key=lambda x: x[1]["balance_eur"], reverse=True)
@@ -194,6 +201,7 @@ def _render_kpi_cards(m):
     
     # Carte 2 : Surplus
     with c2:
+        # Carte : SURPLUS CASH
         bars_html = "".join([
             _render_pbar(curr, data["balance_eur"], m["surplus"], GREEN, data["book_balance"], curr)
             for curr, data in sorted(m["surplus_by_curr"].items(), key=lambda x: x[1]["balance_eur"], reverse=True)
@@ -211,6 +219,7 @@ def _render_kpi_cards(m):
     
     # Carte 3 : Risque
     with c3:
+        # Carte : RISQUE DÉCOUVERT
         # Pour le risque, on affiche les montants absolus dans les barres
         bars_html = "".join([
             _render_pbar(curr, abs(data["balance_eur"]), m["overdraft"], RED, abs(data["book_balance"]), curr)
@@ -228,6 +237,7 @@ def _render_kpi_cards(m):
         )
 
 def _render_positions_chart():
+    # Graphe : BANKING POSITIONS
     _sec("BANKING POSITIONS")
     df = get_table("v_banking_positions").sort_values("total_balance_eur", ascending=True)
     if df.empty: return

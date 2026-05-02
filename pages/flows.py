@@ -100,27 +100,32 @@ def render(now: datetime) -> None:
     m = _calculate_bfr_metrics()
     style = "background:#fff;border-radius:12px;padding:16px 18px;box-shadow:0 1px 4px rgba(0,0,0,0.06);margin-bottom:12px"
     k1, k2, k3, k4, k5 = st.columns(5)
+    # Carte : CRÉANCES CLIENTS
     k1.markdown(
         f'<div style="{style};border-top:3px solid {GREEN}"><div style="font-size:.72rem;color:#64748B">CRÉANCES CLIENTS</div>'
         f'<div style="font-size:1.35rem;font-weight:800;color:{GREEN}">{m["creances"]:,.0f} €</div></div>',
         unsafe_allow_html=True,
     )
+    # Carte : DETTES FOURNISSEURS
     k2.markdown(
         f'<div style="{style};border-top:3px solid {RED}"><div style="font-size:.72rem;color:#64748B">DETTES FOURNISSEURS</div>'
         f'<div style="font-size:1.35rem;font-weight:800;color:{RED}">{m["dettes"]:,.0f} €</div></div>',
         unsafe_allow_html=True,
     )
     bfr_c = RED if m["bfr"] > 0 else GREEN
+    # Carte : BFR NET
     k3.markdown(
         f'<div style="{style};border-top:3px solid {bfr_c}"><div style="font-size:.72rem;color:#64748B">BFR NET</div>'
         f'<div style="font-size:1.35rem;font-weight:800;color:{bfr_c}">{m["bfr"]:,.0f} €</div></div>',
         unsafe_allow_html=True,
     )
+    # Carte : DSO (jours)
     k4.markdown(
         f'<div style="{style};border-top:3px solid {AMBER}"><div style="font-size:.72rem;color:#64748B">DSO (jours)</div>'
         f'<div style="font-size:1.35rem;font-weight:800;color:{AMBER}">{m["dso"]}</div></div>',
         unsafe_allow_html=True,
     )
+    # Carte : DPO (jours)
     k5.markdown(
         f'<div style="{style};border-top:3px solid {BLUE}"><div style="font-size:.72rem;color:#64748B">DPO (jours)</div>'
         f'<div style="font-size:1.35rem;font-weight:800;color:{BLUE}">{m["dpo"]}</div></div>',
@@ -129,43 +134,44 @@ def render(now: datetime) -> None:
 
     # ── Invoice creation ─────────────────────────────────────────────────────
     st.markdown("---")
-    st.markdown("#### ➕ Nouvelle Facture")
+    st.markdown("#### ➕ Ajouter des Factures")
 
-    with st.expander("Saisir une facture manuellement", expanded=False):
-        with st.form("inv_form", clear_on_submit=True):
+    tab_manuel, tab_fichier, tab_api = st.tabs(["✏️ Saisie manuelle", "📁 Importation fichier", "🔗 API / ERP"])
+
+    # ── Tab 1 : manual entry ──────────────────────────────────────────────────
+    with tab_manuel:
+        with st.form("inv_form_manual", clear_on_submit=True):
             r1c1, r1c2 = st.columns(2)
-            inv_type    = r1c1.selectbox("Type", ["CUSTOMER", "SUPPLIER"],
-                                         format_func=lambda x: "Client" if x == "CUSTOMER" else "Fournisseur")
+            inv_type     = r1c1.selectbox("Type *", ["CUSTOMER", "SUPPLIER"],
+                                          format_func=lambda x: "Client" if x == "CUSTOMER" else "Fournisseur")
             counterparty = r1c2.text_input("Tiers (raison sociale) *")
 
             r2c1, r2c2, r2c3 = st.columns(3)
-            amount   = r2c1.number_input("Montant TTC *", min_value=0.0, step=1000.0, format="%.2f")
-            currency = r2c2.selectbox("Devise", _CCY_OPTIONS)
+            amount     = r2c1.number_input("Montant TTC *", min_value=0.0, step=1000.0, format="%.2f")
+            currency   = r2c2.selectbox("Devise", _CCY_OPTIONS)
             inv_number = r2c3.text_input(
                 "N° Facture",
                 placeholder="Auto-généré si vide",
-                help="Laissez vide pour un numéro automatique (INV-YYYY-NNN ou FOU-YYYY-NNN)",
+                help="Laissez vide → numéro automatique INV-YYYY-NNN / FOU-YYYY-NNN",
             )
 
             r3c1, r3c2 = st.columns(2)
-            issue_dt = r3c1.date_input("Date d'émission", value=date.today())
-            due_dt   = r3c2.date_input(
-                "Date d'échéance", value=date.today() + timedelta(days=30)
-            )
+            issue_dt = r3c1.date_input("Date d'émission", value=date.today(), key="man_issue")
+            due_dt   = r3c2.date_input("Date d'échéance",
+                                       value=date.today() + timedelta(days=30), key="man_due")
 
-            submitted = st.form_submit_button("💾 Enregistrer la facture", use_container_width=True)
+            submitted = st.form_submit_button("💾 Enregistrer", use_container_width=True)
 
         if submitted:
-            errors = []
+            errs = []
             if not counterparty.strip():
-                errors.append("Le champ **Tiers** est obligatoire.")
+                errs.append("Le champ **Tiers** est obligatoire.")
             if amount <= 0:
-                errors.append("Le montant doit être supérieur à 0.")
+                errs.append("Le montant doit être supérieur à 0.")
             if due_dt < issue_dt:
-                errors.append("La date d'échéance ne peut pas être antérieure à la date d'émission.")
-
-            if errors:
-                for e in errors:
+                errs.append("L'échéance ne peut pas être antérieure à l'émission.")
+            if errs:
+                for e in errs:
                     st.error(e)
             else:
                 final_number = inv_number.strip() or _next_invoice_number(inv_type)
@@ -173,14 +179,142 @@ def render(now: datetime) -> None:
                     _save_invoice(final_number, inv_type, counterparty.strip(),
                                   amount, currency, issue_dt, due_dt)
                     st.success(
-                        f"✅ Facture **{final_number}** enregistrée — "
+                        f"✅ **{final_number}** enregistrée — "
                         f"{amount:,.0f} {currency} · échéance {due_dt.strftime('%d/%m/%Y')}"
                     )
                 except Exception as exc:
                     st.error(f"Erreur lors de l'enregistrement : {exc}")
 
+    # ── Tab 2 : file import (CSV / Excel) ─────────────────────────────────────
+    with tab_fichier:
+        st.markdown(
+            '<p style="font-size:.82rem;color:#64748B;margin-bottom:10px">'
+            "Importez un fichier CSV ou Excel contenant vos factures. "
+            "Les colonnes doivent correspondre au modèle ci-dessous.</p>",
+            unsafe_allow_html=True,
+        )
+
+        # Download template
+        template_df = pd.DataFrame(columns=[
+            "invoice_number", "invoice_type", "counterparty_name",
+            "amount_ttc", "currency", "issue_date", "due_date",
+        ])
+        template_df.loc[0] = ["INV-2026-099", "CUSTOMER", "Exemple SA", 12000, "EUR",
+                               str(date.today()), str(date.today() + timedelta(days=30))]
+        template_df.loc[1] = ["FOU-2026-099", "SUPPLIER", "Fournisseur SRL", 8500, "EUR",
+                               str(date.today()), str(date.today() + timedelta(days=15))]
+        csv_template = template_df.to_csv(index=False).encode("utf-8")
+        st.download_button("⬇ Télécharger le modèle CSV", csv_template,
+                           "modele_factures.csv", "text/csv")
+
+        uploaded = st.file_uploader(
+            "Glissez-déposez votre fichier (CSV ou Excel)",
+            type=["csv", "xlsx", "xls"],
+            key="inv_upload",
+        )
+
+        if uploaded is not None:
+            try:
+                if uploaded.name.endswith(".csv"):
+                    df_up = pd.read_csv(uploaded)
+                else:
+                    df_up = pd.read_excel(uploaded)
+
+                required = {"invoice_type", "counterparty_name", "amount_ttc",
+                            "currency", "issue_date", "due_date"}
+                missing_cols = required - set(df_up.columns.str.lower())
+                if missing_cols:
+                    st.error(f"Colonnes manquantes : {', '.join(missing_cols)}")
+                else:
+                    df_up.columns = df_up.columns.str.lower()
+                    st.markdown(f"**{len(df_up)} facture(s) détectée(s)** — aperçu :")
+                    st.dataframe(df_up.head(10), use_container_width=True, hide_index=True)
+
+                    if st.button("✅ Importer toutes les factures", key="btn_import_file"):
+                        saved, errors_imp = 0, []
+                        for _, row in df_up.iterrows():
+                            try:
+                                num = str(row.get("invoice_number", "")).strip() or \
+                                      _next_invoice_number(str(row["invoice_type"]))
+                                _save_invoice(
+                                    number      = num,
+                                    inv_type    = str(row["invoice_type"]).upper(),
+                                    counterparty= str(row["counterparty_name"]),
+                                    amount      = float(row["amount_ttc"]),
+                                    currency    = str(row["currency"]).upper(),
+                                    issue_dt    = pd.to_datetime(row["issue_date"]).date(),
+                                    due_dt      = pd.to_datetime(row["due_date"]).date(),
+                                )
+                                saved += 1
+                            except Exception as exc:
+                                errors_imp.append(f"Ligne {_ + 2} : {exc}")
+                        if saved:
+                            st.success(f"✅ {saved} facture(s) importée(s) avec succès.")
+                        for e in errors_imp:
+                            st.warning(e)
+            except Exception as exc:
+                st.error(f"Impossible de lire le fichier : {exc}")
+
+    # ── Tab 3 : API / ERP ─────────────────────────────────────────────────────
+    with tab_api:
+        st.markdown(
+            '<p style="font-size:.82rem;color:#64748B;margin-bottom:14px">'
+            "Synchronisez les factures depuis votre ERP ou votre API comptable. "
+            "Collez une réponse JSON ou configurez un endpoint.</p>",
+            unsafe_allow_html=True,
+        )
+
+        api_src = st.radio("Source", ["Sage", "SAP", "Cegid", "API personnalisée"],
+                           horizontal=True, key="api_src")
+
+        if api_src == "API personnalisée":
+            api_url = st.text_input("URL endpoint (GET)", placeholder="https://erp.exemple.com/api/invoices")
+            api_key = st.text_input("API Key (Bearer)", type="password", placeholder="sk-…")
+        else:
+            st.info(f"Connecteur **{api_src}** — entrez vos credentials ci-dessous.")
+            st.text_input("Identifiant", key="api_user")
+            st.text_input("Mot de passe", type="password", key="api_pass")
+
+        st.markdown("**Ou collez une réponse JSON** (tableau de factures) :")
+        json_raw = st.text_area("JSON", height=140, placeholder='[{"invoice_type":"CUSTOMER", ...}]',
+                                key="api_json")
+
+        if st.button("🔄 Importer depuis JSON", key="btn_import_json"):
+            if not json_raw.strip():
+                st.warning("Collez un JSON valide.")
+            else:
+                try:
+                    import json
+                    records = json.loads(json_raw)
+                    if isinstance(records, dict):
+                        records = [records]
+                    saved, errors_api = 0, []
+                    for i, rec in enumerate(records):
+                        try:
+                            num = str(rec.get("invoice_number", "")).strip() or \
+                                  _next_invoice_number(str(rec.get("invoice_type", "CUSTOMER")))
+                            _save_invoice(
+                                number      = num,
+                                inv_type    = str(rec.get("invoice_type", "CUSTOMER")).upper(),
+                                counterparty= str(rec.get("counterparty_name", rec.get("tiers", ""))),
+                                amount      = float(rec.get("amount_ttc", rec.get("amount", 0))),
+                                currency    = str(rec.get("currency", "EUR")).upper(),
+                                issue_dt    = pd.to_datetime(rec.get("issue_date", str(date.today()))).date(),
+                                due_dt      = pd.to_datetime(rec.get("due_date", str(date.today()))).date(),
+                            )
+                            saved += 1
+                        except Exception as exc:
+                            errors_api.append(f"Enregistrement {i + 1} : {exc}")
+                    if saved:
+                        st.success(f"✅ {saved} facture(s) importée(s) depuis le JSON.")
+                    for e in errors_api:
+                        st.warning(e)
+                except Exception as exc:
+                    st.error(f"JSON invalide : {exc}")
+
     # ── Invoice schedule ──────────────────────────────────────────────────────
     st.markdown("---")
+    # Carte : Échéancier des Factures en Attente
     st.markdown("#### 🗓️ Échéancier des Factures en Attente")
 
     inv = get_table("invoices")
@@ -219,6 +353,7 @@ def render(now: datetime) -> None:
 
     # ── Cash flow forecast chart ──────────────────────────────────────────────
     st.markdown("---")
+    # Graphe : Cash Flow Prévisionnel — Mai 2026
     st.markdown("#### 📈 Cash Flow Prévisionnel — Mai 2026")
 
     fcasts = get_table("forecasts")
@@ -254,6 +389,7 @@ def render(now: datetime) -> None:
         df_pivot["Net"] = df_pivot.get("IN", 0) - df_pivot.get("OUT", 0)
         df_pivot["Cumulé"] = df_pivot["Net"].cumsum()
 
+        # Graphe : Position nette cumulée
         fig2 = px.area(
             df_pivot,
             x="forecast_date",

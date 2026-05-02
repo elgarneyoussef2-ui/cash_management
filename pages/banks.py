@@ -31,6 +31,7 @@ def render(now: datetime) -> None:
     
     df_accounts = df_accounts[["account_number", "bank_name", "account_type", "currency", "book_balance", "balance_eur", "od_ceiling"]]
     
+    # Carte : Positions & Soldes par Compte
     st.markdown("#### Positions & Soldes par Compte")
     COL_FR = {
         "account_number": "N° Compte", "bank_name": "Banque", "account_type": "Type",
@@ -53,6 +54,7 @@ def render(now: datetime) -> None:
     st.download_button("⬇ Exporter CSV", df_accounts.to_csv(index=False).encode("utf-8"), "positions.csv", "text/csv")
 
     st.markdown("---")
+    # Graphe : Positions Détaillées par Banque & Compte
     st.markdown("#### Positions Détaillées par Banque & Compte")
     df_plot = df_accounts.copy()
     df_plot["Label"] = df_plot["bank_name"].astype(str) + "<br><sup>" + df_plot["account_number"].astype(str) + "</sup>"
