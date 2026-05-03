@@ -169,11 +169,9 @@ def _render_welcome_banner(now):
       </div>
       <div style="display:flex;gap:20px;text-align:center">
         <div>
-          # Carte : COMPTES
           <div style="font-size:0.6rem;font-weight:700;color:#9CA3AF">COMPTES</div><div style="font-size:1.2rem;font-weight:800;color:#1A56DB">{n_acc}</div>
         </div>
         <div>
-          # Carte : BANQUES
           <div style="font-size:0.6rem;font-weight:700;color:#9CA3AF">BANQUES</div><div style="font-size:1.2rem;font-weight:800;color:#1A56DB">{n_bnk}</div>
         </div>
       </div>
