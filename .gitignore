@@ -3,4 +3,4 @@ __pycache__/
 .vscode/
 venv/
 .env
-treasury_master.xlsx
+# treasury_master.xlsx (removed from ignore to allow pushing database)
