@@ -381,24 +381,5 @@ def render(now: datetime) -> None:
             )
             apply_chart_theme(fig, "Flux prévisionnels Mai 2026")
             st.plotly_chart(fig, use_container_width=True)
-
-        # Cumulative net view (all dates)
-        df_pivot = df_fc.pivot_table(
-            index="forecast_date", columns="type", values="Montant", aggfunc="sum", fill_value=0
-        ).reset_index()
-        df_pivot["Net"] = df_pivot.get("IN", 0) - df_pivot.get("OUT", 0)
-        df_pivot["Cumulé"] = df_pivot["Net"].cumsum()
-
-        # Graphe : Position nette cumulée
-        fig2 = px.area(
-            df_pivot,
-            x="forecast_date",
-            y="Cumulé",
-            color_discrete_sequence=[BLUE],
-            labels={"forecast_date": "Date", "Cumulé": "Position nette cumulée (€)"},
-        )
-        fig2.add_hline(y=0, line_color="#E02424", line_dash="dash", line_width=1)
-        apply_chart_theme(fig2, "Position nette cumulée")
-        st.plotly_chart(fig2, use_container_width=True)
     else:
         st.info("Aucune prévision disponible.")
