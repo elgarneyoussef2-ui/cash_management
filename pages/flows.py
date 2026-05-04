@@ -338,6 +338,12 @@ def render(now: datetime) -> None:
     inv = get_table("invoices")
     if not inv.empty:
         df = inv[inv["status"] == "PENDING"].sort_values("due_date").copy()
+        
+        # Ensure new columns exist in the dataframe to avoid KeyError
+        for col in ["product", "quantity", "note"]:
+            if col not in df.columns:
+                df[col] = "" if col != "quantity" else 0
+        
         df = df[["invoice_number", "invoice_type", "counterparty_name",
                  "product", "quantity", "due_date", "amount_ttc", "currency", "note"]]
         df = df.rename(columns={
