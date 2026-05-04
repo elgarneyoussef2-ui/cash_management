@@ -67,7 +67,7 @@ def _next_invoice_number(inv_type: str) -> str:
     return f"{prefix}-{year}-{(nums.max() + 1):03d}"
 
 
-def _save_invoice(number, inv_type, counterparty, amount, currency, issue_dt, due_dt) -> None:
+def _save_invoice(number, inv_type, counterparty, amount, currency, issue_dt, due_dt, product="", quantity=0, note="") -> None:
     """Appends a new invoice row to the Excel file and invalidates the cache."""
     wb = openpyxl.load_workbook(_EXCEL_PATH)
     ws = wb["invoices"]
@@ -86,6 +86,9 @@ def _save_invoice(number, inv_type, counterparty, amount, currency, issue_dt, du
         str(due_dt),
         "PENDING",
         str(date.today()),
+        product,
+        quantity,
+        note
     ])
     wb.save(_EXCEL_PATH)
     get_db.clear()  # Invalidate Streamlit cache so the new row is visible immediately
@@ -160,6 +163,12 @@ def render(now: datetime) -> None:
             due_dt   = r3c2.date_input("Date d'échéance",
                                        value=date.today() + timedelta(days=30), key="man_due")
 
+            st.markdown("---")
+            r4c1, r4c2 = st.columns([2, 1])
+            product_val = r4c1.text_input("Produit / Service")
+            quantity_val = r4c2.number_input("Quantité", min_value=0, step=1)
+            note_val = st.text_area("Note libre", height=80)
+
             submitted = st.form_submit_button("💾 Enregistrer", use_container_width=True)
 
         if submitted:
@@ -177,7 +186,10 @@ def render(now: datetime) -> None:
                 final_number = inv_number.strip() or _next_invoice_number(inv_type)
                 try:
                     _save_invoice(final_number, inv_type, counterparty.strip(),
-                                  amount, currency, issue_dt, due_dt)
+                                  amount, currency, issue_dt, due_dt,
+                                  product=product_val.strip(),
+                                  quantity=int(quantity_val),
+                                  note=note_val.strip())
                     st.success(
                         f"✅ **{final_number}** enregistrée — "
                         f"{amount:,.0f} {currency} · échéance {due_dt.strftime('%d/%m/%Y')}"
@@ -244,6 +256,9 @@ def render(now: datetime) -> None:
                                     currency    = str(row["currency"]).upper(),
                                     issue_dt    = pd.to_datetime(row["issue_date"]).date(),
                                     due_dt      = pd.to_datetime(row["due_date"]).date(),
+                                    product     = str(row.get("product", "")),
+                                    quantity    = int(row.get("quantity", 0)),
+                                    note        = str(row.get("note", "")),
                                 )
                                 saved += 1
                             except Exception as exc:
@@ -301,6 +316,9 @@ def render(now: datetime) -> None:
                                 currency    = str(rec.get("currency", "EUR")).upper(),
                                 issue_dt    = pd.to_datetime(rec.get("issue_date", str(date.today()))).date(),
                                 due_dt      = pd.to_datetime(rec.get("due_date", str(date.today()))).date(),
+                                product     = str(rec.get("product", "")),
+                                quantity    = int(rec.get("quantity", 0)),
+                                note        = str(rec.get("note", "")),
                             )
                             saved += 1
                         except Exception as exc:
@@ -321,14 +339,17 @@ def render(now: datetime) -> None:
     if not inv.empty:
         df = inv[inv["status"] == "PENDING"].sort_values("due_date").copy()
         df = df[["invoice_number", "invoice_type", "counterparty_name",
-                 "due_date", "amount_ttc", "currency"]]
+                 "product", "quantity", "due_date", "amount_ttc", "currency", "note"]]
         df = df.rename(columns={
             "invoice_number":   "N° Facture",
             "invoice_type":     "Type",
             "counterparty_name":"Tiers",
+            "product":          "Produit",
+            "quantity":         "Qté",
             "due_date":         "Échéance",
             "amount_ttc":       "Montant TTC",
             "currency":         "Devise",
+            "note":             "Note",
         })
         df["Type"] = df["Type"].map({"CUSTOMER": "Client", "SUPPLIER": "Fournisseur"})
 
