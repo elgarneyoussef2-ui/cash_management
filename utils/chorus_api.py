@@ -1,14 +1,19 @@
 import requests
 import streamlit as st
+import base64
 from datetime import datetime
 
 class ChorusProAPI:
     """Connector for Chorus Pro API via PISTE."""
     
-    def __init__(self, client_id, client_secret, mode="sandbox"):
+    def __init__(self, client_id, client_secret, cpro_login, cpro_password, mode="sandbox"):
         self.client_id = client_id
         self.client_secret = client_secret
         self.mode = mode
+        
+        # CPRO-ACCOUNT Header: base64('login:password')
+        auth_str = f"{cpro_login}:{cpro_password}"
+        self.cpro_account = base64.b64encode(auth_str.encode()).decode()
         
         if mode == "production":
             self.token_url = "https://oauth.piste.gouv.fr/cas/oauth2.0/token"
@@ -19,9 +24,17 @@ class ChorusProAPI:
             
         self.token = None
 
+    def _get_headers(self):
+        """Returns standard headers including OAuth2 and CPRO-ACCOUNT."""
+        return {
+            'Authorization': f'Bearer {self.token}',
+            'Content-Type': 'application/json',
+            'cpro-account': self.cpro_account,
+            'User-Agent': 'TreasuryDashboard/1.0'
+        }
+
     def get_token(self):
         """Authenticates and retrieves an OAuth2 token using Basic Auth."""
-        # PISTE often requires credentials in the Authorization header
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
             'User-Agent': 'TreasuryDashboard/1.0'
@@ -31,7 +44,6 @@ class ChorusProAPI:
             'scope': 'openid'
         }
         try:
-            # Use Basic Auth (client_id, client_secret)
             response = requests.post(
                 self.token_url, 
                 headers=headers, 
@@ -43,30 +55,19 @@ class ChorusProAPI:
             return self.token
         except Exception as e:
             st.error(f"Erreur d'authentification Chorus Pro ({self.mode}) : {e}")
-            if hasattr(e, 'response') and e.response is not None:
-                st.error(f"Détails : {e.response.text}")
             return None
 
     def submit_invoice(self, invoice_data):
-        """
-        Submits an invoice to Chorus Pro.
-        In a real scenario, this would send a PDF or XML (UBL/Factur-X).
-        """
         if not self.token and not self.get_token():
             return {"status": "error", "message": "Auth failed"}
 
         url = f"{self.base_url}/v1/soumettre"
-        headers = {
-            'Authorization': f'Bearer {self.token}',
-            'Content-Type': 'application/json'
-        }
+        headers = self._get_headers()
         
-        # Mapping to Chorus Pro API structure
         payload = {
             "idStructureFournisseur": invoice_data.get('issuer_siret'),
             "idStructureDestinataire": invoice_data.get('recipient_siret'),
             "codeServiceDestinataire": invoice_data.get('service_code'),
-            "numeroEngagement": invoice_data.get('engagement_number'),
             "devise": invoice_data.get('currency', 'EUR'),
             "montantTTC": invoice_data.get('amount'),
             "dateFacture": invoice_data.get('date'),
@@ -75,8 +76,7 @@ class ChorusProAPI:
         }
         
         if self.mode == "sandbox":
-            # Simulate success in sandbox for UI feedback
-            return {"status": "success", "message": "Soumission simulée réussie en Sandbox", "id": "MOCK-ID-123"}
+            return {"status": "success", "message": "Soumission simulée réussie", "id": "MOCK-ID-123"}
             
         try:
             response = requests.post(url, headers=headers, json=payload)
@@ -86,17 +86,12 @@ class ChorusProAPI:
             return {"status": "error", "message": str(e)}
 
     def fetch_received_invoices(self, siret, date_from="2026-01-01"):
-        """Fetches received invoices (Supplier invoices) for a given SIRET."""
         if not self.token and not self.get_token():
             return []
 
         url = f"{self.base_url}/v1/rechercher/recipiendaire"
-        headers = {
-            'Authorization': f'Bearer {self.token}',
-            'Content-Type': 'application/json'
-        }
+        headers = self._get_headers()
         
-        # Payload based on Chorus Pro documentation
         payload = {
             "idDestinataire": siret,
             "periodeDateEmissionDu": date_from,
@@ -107,12 +102,9 @@ class ChorusProAPI:
         try:
             response = requests.post(url, headers=headers, json=payload)
             response.raise_for_status()
-            # In a real scenario, we would parse the list of invoices
-            # Here we return a mock list for demonstration in Sandbox mode
-            data = response.json()
-            return data.get('listeFactures', [])
+            return response.json().get('listeFactures', [])
         except Exception as e:
-            st.warning(f"Note: Connexion Sandbox établie mais erreur de récupération : {e}")
+            st.warning(f"Note: Erreur lors de l'appel Chorus : {e}")
             return []
 
     def fetch_mock_data(self):

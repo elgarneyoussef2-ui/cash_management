@@ -320,15 +320,25 @@ def render(now: datetime) -> None:
 
         if api_src == "Chorus Pro (Sandbox)":
             st.info("Connecteur **Chorus Pro PISTE** — Synchronisation des factures reçues.")
-            c_id = st.text_input("Client ID PISTE", placeholder="piste-...", key="chorus_id")
-            c_secret = st.text_input("Client Secret PISTE", type="password", key="chorus_secret")
+            
+            # PISTE Credentials
+            c1, c2 = st.columns(2)
+            c_id = c1.text_input("Client ID PISTE", placeholder="piste-...", key="chorus_id")
+            c_secret = c2.text_input("Client Secret PISTE", type="password", key="chorus_secret")
+            
+            # Chorus Technical Account (cpro-account)
+            st.markdown("**Compte Technique Chorus Pro**")
+            c3, c4 = st.columns(2)
+            cp_login = c3.text_input("Login (Utilisateur)", placeholder="login_tech", key="chorus_login")
+            cp_pass = c4.text_input("Mot de passe", type="password", key="chorus_pass")
+            
             siret = st.text_input("SIRET Destinataire", placeholder="12345678900010", key="chorus_siret")
             
             if st.button("🔄 Synchroniser avec Chorus Pro", key="btn_sync_chorus"):
-                if not c_id or not c_secret or not siret:
-                    st.warning("Veuillez remplir tous les identifiants PISTE.")
+                if not c_id or not c_secret or not cp_login or not cp_pass or not siret:
+                    st.warning("Veuillez remplir tous les identifiants PISTE et Chorus Pro.")
                 else:
-                    chorus = ChorusProAPI(c_id, c_secret)
+                    chorus = ChorusProAPI(c_id, c_secret, cp_login, cp_pass)
                     with st.spinner("Connexion à Chorus Pro Sandbox..."):
                         invoices = chorus.fetch_received_invoices(siret)
                         # If sandbox is empty, offer mock data for demo
