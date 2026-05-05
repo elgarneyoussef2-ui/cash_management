@@ -34,27 +34,52 @@ class ChorusProAPI:
         }
 
     def get_token(self):
-        """Authenticates and retrieves an OAuth2 token using Basic Auth."""
+        """Authenticates and retrieves an OAuth2 token using ultra-compatible headers."""
+        # Force exact headers requested by PISTE Sandbox
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': 'TreasuryDashboard/1.0'
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
+        
+        # Some PISTE versions prefer credentials in the body for Sandbox
         payload = {
             'grant_type': 'client_credentials',
+            'client_id': self.client_id,
+            'client_secret': self.client_secret,
             'scope': 'openid'
         }
+        
         try:
+            # We send credentials in BOTH body and Basic Auth for maximum compatibility
             response = requests.post(
                 self.token_url, 
                 headers=headers, 
                 data=payload, 
-                auth=(self.client_id, self.client_secret)
+                auth=(self.client_id, self.client_secret),
+                timeout=10
             )
+            
+            if response.status_code == 403:
+                # Try fallback: credentials ONLY in body (no Basic Auth)
+                response = requests.post(
+                    self.token_url, 
+                    headers=headers, 
+                    data=payload,
+                    timeout=10
+                )
+
             response.raise_for_status()
             self.token = response.json().get('access_token')
             return self.token
         except Exception as e:
             st.error(f"Erreur d'authentification Chorus Pro ({self.mode}) : {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    detail = e.response.json()
+                    st.error(f"Détails PISTE : {detail.get('error_description', detail)}")
+                except:
+                    st.error(f"Détails PISTE : {e.response.text}")
             return None
 
     def submit_invoice(self, invoice_data):
