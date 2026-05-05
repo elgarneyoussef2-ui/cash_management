@@ -20,20 +20,31 @@ class ChorusProAPI:
         self.token = None
 
     def get_token(self):
-        """Authenticates and retrieves an OAuth2 token."""
+        """Authenticates and retrieves an OAuth2 token using Basic Auth."""
+        # PISTE often requires credentials in the Authorization header
+        headers = {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': 'TreasuryDashboard/1.0'
+        }
         payload = {
             'grant_type': 'client_credentials',
-            'client_id': self.client_id,
-            'client_secret': self.client_secret,
             'scope': 'openid'
         }
         try:
-            response = requests.post(self.token_url, data=payload)
+            # Use Basic Auth (client_id, client_secret)
+            response = requests.post(
+                self.token_url, 
+                headers=headers, 
+                data=payload, 
+                auth=(self.client_id, self.client_secret)
+            )
             response.raise_for_status()
             self.token = response.json().get('access_token')
             return self.token
         except Exception as e:
             st.error(f"Erreur d'authentification Chorus Pro ({self.mode}) : {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                st.error(f"Détails : {e.response.text}")
             return None
 
     def submit_invoice(self, invoice_data):
