@@ -35,38 +35,39 @@ class ChorusProAPI:
         }
 
     def get_token(self):
-        """Authenticates and retrieves an OAuth2 token using standard PISTE headers."""
+        """Ultra-simplified authentication for PISTE."""
+        # We send EVERYTHING in the body, which is the most compatible mode for PISTE Sandbox
+        payload = {
+            'grant_type': 'client_credentials',
+            'client_id': self.client_id,
+            'client_secret': self.client_secret,
+            'scope': 'openid' # Try with openid first
+        }
+        
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
             'Accept': 'application/json'
         }
         
-        payload = {
-            'grant_type': 'client_credentials',
-            'scope': 'openid'
-        }
-        
         try:
-            # PISTE Standard: Credentials in Basic Auth header
-            response = requests.post(
-                self.token_url, 
-                headers=headers, 
-                data=payload, 
-                auth=(self.client_id, self.client_secret),
-                timeout=15
-            )
+            # First attempt: standard body-only
+            response = requests.post(self.token_url, headers=headers, data=payload, timeout=15)
             
-            # If 403, it's almost certainly a subscription issue on PISTE portal
+            if response.status_code != 200:
+                # Second attempt: remove scope (sometimes problematic)
+                payload.pop('scope', None)
+                response = requests.post(self.token_url, headers=headers, data=payload, timeout=15)
+
             if response.status_code == 403:
-                st.error("🛑 **Access Denied** : Votre application n'est pas autorisée.")
-                st.info("💡 **Action requise** : Allez sur PISTE > Catalogue > Chorus Pro Factures > **Souscrire**.")
+                st.error("🛑 **Access Denied persistante**")
+                st.info("💡 **Dernier recours** : Vérifiez que l'état de votre application sur PISTE est bien **'Activée'** (pas seulement 'Validée').")
                 return None
 
             response.raise_for_status()
             self.token = response.json().get('access_token')
             return self.token
         except Exception as e:
-            st.error(f"Erreur d'authentification Chorus Pro ({self.mode}) : {e}")
+            st.error(f"Erreur d'authentification Chorus Pro : {e}")
             return None
 
     def submit_invoice(self, invoice_data):

@@ -334,41 +334,54 @@ def render(now: datetime) -> None:
             
             siret = st.text_input("SIRET Destinataire", placeholder="12345678900010", key="chorus_siret")
             
-            if st.button("🔄 Synchroniser avec Chorus Pro", key="btn_sync_chorus"):
+            sc1, sc2 = st.columns(2)
+            btn_sync = sc1.button("🔄 Synchroniser Chorus", use_container_width=True)
+            btn_demo = sc2.button("🧪 Mode Démo (Sans API)", use_container_width=True)
+            
+            if btn_sync:
                 if not c_id or not c_secret or not cp_login or not cp_pass or not siret:
                     st.warning("Veuillez remplir tous les identifiants PISTE et Chorus Pro.")
                 else:
                     chorus = ChorusProAPI(c_id, c_secret, cp_login, cp_pass)
                     with st.spinner("Connexion à Chorus Pro Sandbox..."):
                         invoices = chorus.fetch_received_invoices(siret)
-                        # If sandbox is empty, offer mock data for demo
+                        # Process invoices...
                         if not invoices:
-                            st.info("Aucune facture trouvée en Sandbox. Utilisation des données de démonstration.")
-                            invoices = chorus.fetch_mock_data()
-                        
-                        saved = 0
-                        for inv_data in invoices:
-                            try:
-                                _save_invoice(
-                                    number      = inv_data["invoice_number"],
-                                    inv_type    = inv_data["invoice_type"],
-                                    counterparty= inv_data["counterparty_name"],
-                                    amount      = inv_data["amount_ttc"],
-                                    currency    = inv_data["currency"],
-                                    issue_dt    = datetime.strptime(inv_data["issue_date"], "%Y-%m-%d").date(),
-                                    due_dt      = datetime.strptime(inv_data["due_date"], "%Y-%m-%d").date(),
-                                    product     = inv_data["product"],
-                                    quantity    = inv_data["quantity"],
-                                    note        = inv_data["note"]
-                                )
-                                saved += 1
-                            except Exception as e:
-                                pass
-                        
-                        if saved:
-                            st.success(f"✅ {saved} facture(s) synchronisée(s) depuis Chorus Pro.")
+                            st.info("Aucune facture trouvée. Utilisez le 'Mode Démo' pour tester l'affichage.")
                         else:
-                            st.warning("Aucune nouvelle facture à synchroniser.")
+                            _process_and_save_invoices(invoices)
+
+            if btn_demo:
+                chorus = ChorusProAPI("demo", "demo", "demo", "demo")
+                invoices = chorus.fetch_mock_data()
+                _process_and_save_invoices(invoices)
+                st.success("✅ Données de démonstration importées avec succès.")
+
+def _process_and_save_invoices(invoices):
+    saved = 0
+    for inv_data in invoices:
+        try:
+            from datetime import datetime
+            _save_invoice(
+                number      = inv_data["invoice_number"],
+                inv_type    = inv_data["invoice_type"],
+                counterparty= inv_data["counterparty_name"],
+                amount      = inv_data["amount_ttc"],
+                currency    = inv_data["currency"],
+                issue_dt    = datetime.strptime(inv_data["issue_date"], "%Y-%m-%d").date(),
+                due_dt      = datetime.strptime(inv_data["due_date"], "%Y-%m-%d").date(),
+                product     = inv_data["product"],
+                quantity    = inv_data["quantity"],
+                note        = inv_data["note"]
+            )
+            saved += 1
+        except Exception:
+            pass
+    if saved:
+        st.success(f"✅ {saved} facture(s) ajoutée(s) à la base de données.")
+    else:
+        st.warning("Aucune nouvelle facture à ajouter (déjà existantes).")
+
 
         elif api_src == "API personnalisée":
             api_url = st.text_input("URL endpoint (GET)", placeholder="https://erp.exemple.com/api/invoices")
