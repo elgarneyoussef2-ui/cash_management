@@ -54,18 +54,19 @@ def _calculate_bfr_metrics():
 
 
 def _next_invoice_number(inv_type: str) -> str:
-    """Generates next sequential invoice number (INV-YYYY-NNN or FOU-YYYY-NNN)."""
+    """Calculates the next invoice number based on existing records."""
     df = get_table("invoices")
-    prefix = "INV" if inv_type == "CUSTOMER" else "FOU"
-    year   = datetime.now().year
-    if df.empty:
-        return f"{prefix}-{year}-001"
-    existing = df["invoice_number"].astype(str)
-    same_prefix = existing[existing.str.startswith(f"{prefix}-{year}-")]
-    if same_prefix.empty:
-        return f"{prefix}-{year}-001"
-    nums = same_prefix.str.extract(r"-(\d+)$")[0].dropna().astype(int)
-    return f"{prefix}-{year}-{(nums.max() + 1):03d}"
+    prefix = "INV" if inv_type == "CUSTOMER" else "BILL"
+    year = date.today().year
+    
+    # Filter by prefix and year
+    mask = df["invoice_number"].str.startswith(f"{prefix}-{year}")
+    if mask.any():
+        nums = df.loc[mask, "invoice_number"].str.extract(r"-(\d+)$").astype(int)
+        nxt = int(nums.max().iloc[0]) + 1
+    else:
+        nxt = 1
+    return f"{prefix}-{year}-{nxt:03d}"
 
 
 def _save_invoice(number, inv_type, counterparty, amount, currency, issue_dt, due_dt, product="", quantity=0, note="") -> None:
@@ -93,6 +94,33 @@ def _save_invoice(number, inv_type, counterparty, amount, currency, issue_dt, du
     ])
     wb.save(_EXCEL_PATH)
     get_db.clear()  # Invalidate Streamlit cache so the new row is visible immediately
+
+
+def _process_and_save_invoices(invoices):
+    """Processes a list of invoice dictionaries and saves them to the DB."""
+    saved = 0
+    for inv_data in invoices:
+        try:
+            from datetime import datetime
+            _save_invoice(
+                number      = inv_data["invoice_number"],
+                inv_type    = inv_data["invoice_type"],
+                counterparty= inv_data["counterparty_name"],
+                amount      = inv_data["amount_ttc"],
+                currency    = inv_data["currency"],
+                issue_dt    = datetime.strptime(inv_data["issue_date"], "%Y-%m-%d").date(),
+                due_dt      = datetime.strptime(inv_data["due_date"], "%Y-%m-%d").date(),
+                product     = inv_data["product"],
+                quantity    = inv_data["quantity"],
+                note        = inv_data["note"]
+            )
+            saved += 1
+        except Exception:
+            pass
+    if saved:
+        st.success(f"✅ {saved} facture(s) ajoutée(s) à la base de données.")
+    else:
+        st.warning("Aucune nouvelle facture à ajouter (déjà existantes).")
 
 
 # ── Page ─────────────────────────────────────────────────────────────────────
@@ -356,32 +384,6 @@ def render(now: datetime) -> None:
                 invoices = chorus.fetch_mock_data()
                 _process_and_save_invoices(invoices)
                 st.success("✅ Données de démonstration importées avec succès.")
-
-def _process_and_save_invoices(invoices):
-    saved = 0
-    for inv_data in invoices:
-        try:
-            from datetime import datetime
-            _save_invoice(
-                number      = inv_data["invoice_number"],
-                inv_type    = inv_data["invoice_type"],
-                counterparty= inv_data["counterparty_name"],
-                amount      = inv_data["amount_ttc"],
-                currency    = inv_data["currency"],
-                issue_dt    = datetime.strptime(inv_data["issue_date"], "%Y-%m-%d").date(),
-                due_dt      = datetime.strptime(inv_data["due_date"], "%Y-%m-%d").date(),
-                product     = inv_data["product"],
-                quantity    = inv_data["quantity"],
-                note        = inv_data["note"]
-            )
-            saved += 1
-        except Exception:
-            pass
-    if saved:
-        st.success(f"✅ {saved} facture(s) ajoutée(s) à la base de données.")
-    else:
-        st.warning("Aucune nouvelle facture à ajouter (déjà existantes).")
-
 
         elif api_src == "API personnalisée":
             api_url = st.text_input("URL endpoint (GET)", placeholder="https://erp.exemple.com/api/invoices")
