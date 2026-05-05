@@ -7,6 +7,7 @@ import openpyxl  # type: ignore
 
 from db.database import get_db, get_table
 from utils.config import BLUE, GREEN, RED, AMBER, apply_chart_theme
+from utils.chorus_api import ChorusProAPI
 from components.navbar import page_header
 
 _EXCEL_PATH = "treasury_master.xlsx"
@@ -274,15 +275,57 @@ def render(now: datetime) -> None:
     with tab_api:
         st.markdown(
             '<p style="font-size:.82rem;color:#64748B;margin-bottom:14px">'
-            "Synchronisez les factures depuis votre ERP ou votre API comptable. "
-            "Collez une réponse JSON ou configurez un endpoint.</p>",
+            "Synchronisez les factures depuis Chorus Pro ou votre ERP. "
+            "Configurez vos accès PISTE pour la Sandbox Chorus.</p>",
             unsafe_allow_html=True,
         )
 
-        api_src = st.radio("Source", ["Sage", "SAP", "Cegid", "API personnalisée"],
+        api_src = st.radio("Source", ["Chorus Pro (Sandbox)", "Sage", "SAP", "API personnalisée"],
                            horizontal=True, key="api_src")
 
-        if api_src == "API personnalisée":
+        if api_src == "Chorus Pro (Sandbox)":
+            st.info("Connecteur **Chorus Pro PISTE** — Synchronisation des factures reçues.")
+            c_id = st.text_input("Client ID PISTE", placeholder="piste-...", key="chorus_id")
+            c_secret = st.text_input("Client Secret PISTE", type="password", key="chorus_secret")
+            siret = st.text_input("SIRET Destinataire", placeholder="12345678900010", key="chorus_siret")
+            
+            if st.button("🔄 Synchroniser avec Chorus Pro", key="btn_sync_chorus"):
+                if not c_id or not c_secret or not siret:
+                    st.warning("Veuillez remplir tous les identifiants PISTE.")
+                else:
+                    chorus = ChorusProAPI(c_id, c_secret)
+                    with st.spinner("Connexion à Chorus Pro Sandbox..."):
+                        invoices = chorus.fetch_received_invoices(siret)
+                        # If sandbox is empty, offer mock data for demo
+                        if not invoices:
+                            st.info("Aucune facture trouvée en Sandbox. Utilisation des données de démonstration.")
+                            invoices = chorus.fetch_mock_data()
+                        
+                        saved = 0
+                        for inv_data in invoices:
+                            try:
+                                _save_invoice(
+                                    number      = inv_data["invoice_number"],
+                                    inv_type    = inv_data["invoice_type"],
+                                    counterparty= inv_data["counterparty_name"],
+                                    amount      = inv_data["amount_ttc"],
+                                    currency    = inv_data["currency"],
+                                    issue_dt    = datetime.strptime(inv_data["issue_date"], "%Y-%m-%d").date(),
+                                    due_dt      = datetime.strptime(inv_data["due_date"], "%Y-%m-%d").date(),
+                                    product     = inv_data["product"],
+                                    quantity    = inv_data["quantity"],
+                                    note        = inv_data["note"]
+                                )
+                                saved += 1
+                            except Exception as e:
+                                pass
+                        
+                        if saved:
+                            st.success(f"✅ {saved} facture(s) synchronisée(s) depuis Chorus Pro.")
+                        else:
+                            st.warning("Aucune nouvelle facture à synchroniser.")
+
+        elif api_src == "API personnalisée":
             api_url = st.text_input("URL endpoint (GET)", placeholder="https://erp.exemple.com/api/invoices")
             api_key = st.text_input("API Key (Bearer)", type="password", placeholder="sk-…")
         else:

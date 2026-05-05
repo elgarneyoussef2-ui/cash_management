@@ -76,6 +76,18 @@ Le simulateur permet de projeter des décisions de trésorerie :
 - **Openpyxl** : Interface avec la base de données Excel.
 - **Plotly** : Graphiques financiers interactifs.
 
+## 🔗 Intégration Chorus Pro (Sandbox)
+
+Le dashboard supporte désormais la synchronisation native avec **Chorus Pro** via la plateforme PISTE.
+
+### Configuration
+1. Obtenez vos identifiants sur [PISTE](https://piste.gouv.fr/).
+2. Dans la page **Flux & Factures**, onglet **API / ERP**, sélectionnez **Chorus Pro (Sandbox)**.
+3. Renseignez votre `Client ID`, `Client Secret` et `SIRET`.
+4. Cliquez sur **Synchroniser** pour importer automatiquement vos factures reçues.
+
+*Note : En mode Sandbox, si aucune facture n'est présente, le système propose des données de démonstration cohérentes.*
+
 ## ⚙️ Installation & Utilisation
 
 1. **Installation** :
