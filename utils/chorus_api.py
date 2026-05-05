@@ -3,13 +3,20 @@ import streamlit as st
 from datetime import datetime
 
 class ChorusProAPI:
-    """Connector for Chorus Pro Sandbox API via PISTE."""
+    """Connector for Chorus Pro API via PISTE."""
     
-    def __init__(self, client_id, client_secret):
+    def __init__(self, client_id, client_secret, mode="sandbox"):
         self.client_id = client_id
         self.client_secret = client_secret
-        self.token_url = "https://sandbox-oauth.piste.gouv.fr/cas/oauth2.0/token"
-        self.base_url = "https://sandbox-api.piste.gouv.fr/cpro/factures"
+        self.mode = mode
+        
+        if mode == "production":
+            self.token_url = "https://oauth.piste.gouv.fr/cas/oauth2.0/token"
+            self.base_url = "https://api.piste.gouv.fr/cpro/factures"
+        else:
+            self.token_url = "https://sandbox-oauth.piste.gouv.fr/cas/oauth2.0/token"
+            self.base_url = "https://sandbox-api.piste.gouv.fr/cpro/factures"
+            
         self.token = None
 
     def get_token(self):
@@ -26,8 +33,46 @@ class ChorusProAPI:
             self.token = response.json().get('access_token')
             return self.token
         except Exception as e:
-            st.error(f"Erreur d'authentification Chorus Pro : {e}")
+            st.error(f"Erreur d'authentification Chorus Pro ({self.mode}) : {e}")
             return None
+
+    def submit_invoice(self, invoice_data):
+        """
+        Submits an invoice to Chorus Pro.
+        In a real scenario, this would send a PDF or XML (UBL/Factur-X).
+        """
+        if not self.token and not self.get_token():
+            return {"status": "error", "message": "Auth failed"}
+
+        url = f"{self.base_url}/v1/soumettre"
+        headers = {
+            'Authorization': f'Bearer {self.token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Mapping to Chorus Pro API structure
+        payload = {
+            "idStructureFournisseur": invoice_data.get('issuer_siret'),
+            "idStructureDestinataire": invoice_data.get('recipient_siret'),
+            "codeServiceDestinataire": invoice_data.get('service_code'),
+            "numeroEngagement": invoice_data.get('engagement_number'),
+            "devise": invoice_data.get('currency', 'EUR'),
+            "montantTTC": invoice_data.get('amount'),
+            "dateFacture": invoice_data.get('date'),
+            "numeroFacture": invoice_data.get('number'),
+            "cadreFacturation": "A1_FACTURE_FOURNISSEUR"
+        }
+        
+        if self.mode == "sandbox":
+            # Simulate success in sandbox for UI feedback
+            return {"status": "success", "message": "Soumission simulée réussie en Sandbox", "id": "MOCK-ID-123"}
+            
+        try:
+            response = requests.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            return {"status": "success", "data": response.json()}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
     def fetch_received_invoices(self, siret, date_from="2026-01-01"):
         """Fetches received invoices (Supplier invoices) for a given SIRET."""

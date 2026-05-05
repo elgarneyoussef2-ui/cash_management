@@ -170,6 +170,13 @@ def render(now: datetime) -> None:
             quantity_val = r4c2.number_input("Quantité", min_value=0, step=1)
             note_val = st.text_area("Note libre", height=80)
 
+            st.markdown("---")
+            do_chorus = st.checkbox("🚀 Soumettre également à Chorus Pro", help="Envoie cette facture sur le portail Chorus Pro (Sandbox)")
+            if do_chorus:
+                sc1, sc2 = st.columns(2)
+                recipient_siret = sc1.text_input("SIRET Client (Public)", placeholder="12345678900010")
+                service_code = sc2.text_input("Code Service", placeholder="SERVICES_FACT")
+
             submitted = st.form_submit_button("💾 Enregistrer", use_container_width=True)
 
         if submitted:
@@ -180,19 +187,47 @@ def render(now: datetime) -> None:
                 errs.append("Le montant doit être supérieur à 0.")
             if due_dt < issue_dt:
                 errs.append("L'échéance ne peut pas être antérieure à l'émission.")
+            if do_chorus and not recipient_siret.strip():
+                errs.append("Le **SIRET Client** est obligatoire pour l'envoi Chorus.")
+            
             if errs:
                 for e in errs:
                     st.error(e)
             else:
                 final_number = inv_number.strip() or _next_invoice_number(inv_type)
                 try:
+                    # 1. Local Save
                     _save_invoice(final_number, inv_type, counterparty.strip(),
                                   amount, currency, issue_dt, due_dt,
                                   product=product_val.strip(),
                                   quantity=int(quantity_val),
                                   note=note_val.strip())
+                    
+                    # 2. Optional Chorus Submission
+                    if do_chorus:
+                        # Use secrets if available, else session
+                        c_id = st.session_state.get("chorus_id", "")
+                        c_secret = st.session_state.get("chorus_secret", "")
+                        
+                        if not c_id:
+                            st.warning("⚠️ Identifiants Chorus manquants dans l'onglet 'API / ERP'. Facture enregistrée localement uniquement.")
+                        else:
+                            chorus = ChorusProAPI(c_id, c_secret)
+                            res = chorus.submit_invoice({
+                                "number": final_number,
+                                "amount": amount,
+                                "currency": currency,
+                                "date": str(issue_dt),
+                                "recipient_siret": recipient_siret,
+                                "service_code": service_code
+                            })
+                            if res["status"] == "success":
+                                st.success(f"🚀 Facture **{final_number}** soumise à Chorus Pro !")
+                            else:
+                                st.error(f"❌ Échec de l'envoi Chorus : {res['message']}")
+
                     st.success(
-                        f"✅ **{final_number}** enregistrée — "
+                        f"✅ **{final_number}** enregistrée localement — "
                         f"{amount:,.0f} {currency} · échéance {due_dt.strftime('%d/%m/%Y')}"
                     )
                 except Exception as exc:
