@@ -7,8 +7,8 @@ from datetime import datetime
 class ChorusProAPI:
     """Connector for Chorus Pro API via PISTE."""
 
-    SANDBOX_TOKEN_URL = "https://sandbox-oauth.piste.gouv.fr/cas/oauth2.0/token"
-    PROD_TOKEN_URL    = "https://oauth.piste.gouv.fr/cas/oauth2.0/token"
+    SANDBOX_TOKEN_URL = "https://sandbox-oauth.piste.gouv.fr/api/oauth/token"
+    PROD_TOKEN_URL    = "https://oauth.piste.gouv.fr/api/oauth/token"
     SANDBOX_BASE_URL  = "https://sandbox-api.piste.gouv.fr/cpro/factures/v1"
     PROD_BASE_URL     = "https://api.piste.gouv.fr/cpro/factures/v1"
 
@@ -39,31 +39,58 @@ class ChorusProAPI:
 
     def get_token(self) -> str | None:
         """Obtient un token OAuth2 PISTE via client_credentials."""
-        payload = {
-            "grant_type":    "client_credentials",
-            "client_id":     self.client_id,
-            "client_secret": self.client_secret,
-        }
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
             "Accept":       "application/json",
         }
+        base_payload = {
+            "grant_type":    "client_credentials",
+            "client_id":     self.client_id,
+            "client_secret": self.client_secret,
+        }
+        # Try several scope combinations — PISTE Sandbox behaviour varies
+        scope_attempts = ["openid", "", "openid profile", None]
 
         try:
-            resp = requests.post(self.token_url, headers=headers,
-                                 data=payload, timeout=15)
+            last_resp = None
+            for scope in scope_attempts:
+                payload = dict(base_payload)
+                if scope:
+                    payload["scope"] = scope
 
-            if resp.status_code == 401:
-                st.error("❌ **Authentification échouée** : Client ID ou Secret invalide.")
-                return None
-            if resp.status_code == 403:
-                st.error("🛑 **Accès refusé** : Vérifiez que l'application est **Activée** sur PISTE et que l'API Factures est souscrite.")
-                return None
+                resp = requests.post(self.token_url, headers=headers,
+                                     data=payload, timeout=15)
+                last_resp = resp
 
-            resp.raise_for_status()
-            data = resp.json()
-            self.token = data.get("access_token")
-            return self.token
+                if resp.status_code == 200:
+                    data = resp.json()
+                    self.token = data.get("access_token")
+                    if self.token:
+                        return self.token
+
+            # All attempts failed — show diagnostic info
+            if last_resp is not None:
+                code = last_resp.status_code
+                try:
+                    body = last_resp.json()
+                except Exception:
+                    body = last_resp.text[:400]
+
+                if code == 401:
+                    st.error("❌ **401 - Client ID ou Secret invalide.**")
+                elif code == 403:
+                    st.error("🛑 **403 - Accès refusé.**")
+                    st.info(
+                        "**Checklist PISTE :**\n"
+                        "1. Application **Activée** (pas seulement Validée) ?\n"
+                        "2. Section **Scopes** → ajoutez `openid`\n"
+                        "3. API **Factures v1.0.0** bien souscrite ?\n"
+                        "4. Attendez quelques minutes après activation."
+                    )
+                else:
+                    st.error(f"❌ **HTTP {code}** — réponse PISTE :")
+                    st.code(str(body), language="json")
+            return None
 
         except requests.exceptions.ConnectionError:
             st.error("🔌 Impossible de joindre le serveur PISTE. Vérifiez votre connexion.")
