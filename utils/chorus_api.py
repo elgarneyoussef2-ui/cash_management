@@ -7,12 +7,13 @@ class ChorusProAPI:
     """Connector for Chorus Pro API via PISTE."""
     
     def __init__(self, client_id, client_secret, cpro_login, cpro_password, mode="sandbox"):
-        self.client_id = client_id
-        self.client_secret = client_secret
+        # Strip potential spaces from IDs
+        self.client_id = client_id.strip()
+        self.client_secret = client_secret.strip()
         self.mode = mode
         
         # CPRO-ACCOUNT Header: base64('login:password')
-        auth_str = f"{cpro_login}:{cpro_password}"
+        auth_str = f"{cpro_login.strip()}:{cpro_password.strip()}"
         self.cpro_account = base64.b64encode(auth_str.encode()).decode()
         
         if mode == "production":
@@ -34,52 +35,38 @@ class ChorusProAPI:
         }
 
     def get_token(self):
-        """Authenticates and retrieves an OAuth2 token using ultra-compatible headers."""
-        # Force exact headers requested by PISTE Sandbox
+        """Authenticates and retrieves an OAuth2 token using standard PISTE headers."""
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
-            'Accept': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'Accept': 'application/json'
         }
         
-        # Some PISTE versions prefer credentials in the body for Sandbox
         payload = {
             'grant_type': 'client_credentials',
-            'client_id': self.client_id,
-            'client_secret': self.client_secret,
             'scope': 'openid'
         }
         
         try:
-            # We send credentials in BOTH body and Basic Auth for maximum compatibility
+            # PISTE Standard: Credentials in Basic Auth header
             response = requests.post(
                 self.token_url, 
                 headers=headers, 
                 data=payload, 
                 auth=(self.client_id, self.client_secret),
-                timeout=10
+                timeout=15
             )
             
+            # If 403, it's almost certainly a subscription issue on PISTE portal
             if response.status_code == 403:
-                # Try fallback: credentials ONLY in body (no Basic Auth)
-                response = requests.post(
-                    self.token_url, 
-                    headers=headers, 
-                    data=payload,
-                    timeout=10
-                )
+                st.error("🛑 **Access Denied** : Votre application n'est pas autorisée.")
+                st.info("💡 **Action requise** : Allez sur PISTE > Catalogue > Chorus Pro Factures > **Souscrire**.")
+                return None
 
             response.raise_for_status()
             self.token = response.json().get('access_token')
             return self.token
         except Exception as e:
             st.error(f"Erreur d'authentification Chorus Pro ({self.mode}) : {e}")
-            if hasattr(e, 'response') and e.response is not None:
-                try:
-                    detail = e.response.json()
-                    st.error(f"Détails PISTE : {detail.get('error_description', detail)}")
-                except:
-                    st.error(f"Détails PISTE : {e.response.text}")
             return None
 
     def submit_invoice(self, invoice_data):
