@@ -233,14 +233,15 @@ def render(now: datetime) -> None:
                     
                     # 2. Optional Chorus Submission
                     if do_chorus:
-                        # Use secrets if available, else session
-                        c_id = st.session_state.get("chorus_id", "")
+                        c_id     = st.session_state.get("chorus_id", "")
                         c_secret = st.session_state.get("chorus_secret", "")
-                        
-                        if not c_id:
+                        c_login  = st.session_state.get("chorus_login", "")
+                        c_pass   = st.session_state.get("chorus_pass", "")
+
+                        if not c_id or not c_secret:
                             st.warning("⚠️ Identifiants Chorus manquants dans l'onglet 'API / ERP'. Facture enregistrée localement uniquement.")
                         else:
-                            chorus = ChorusProAPI(c_id, c_secret)
+                            chorus = ChorusProAPI(c_id, c_secret, c_login, c_pass)
                             res = chorus.submit_invoice({
                                 "number": final_number,
                                 "amount": amount,
@@ -336,62 +337,140 @@ def render(now: datetime) -> None:
 
     # ── Tab 3 : API / ERP ─────────────────────────────────────────────────────
     with tab_api:
+        # Load PISTE credentials from secrets (pre-fill if available)
+        _secrets = st.secrets.get("chorus", {}) if hasattr(st, "secrets") else {}
+        _default_id     = _secrets.get("client_id", "")
+        _default_secret = _secrets.get("client_secret", "")
+        _default_mode   = _secrets.get("mode", "sandbox")
+
         st.markdown(
             '<p style="font-size:.82rem;color:#64748B;margin-bottom:14px">'
-            "Synchronisez les factures depuis Chorus Pro ou votre ERP. "
-            "Configurez vos accès PISTE pour la Sandbox Chorus.</p>",
+            "Synchronisez les factures depuis <b>Chorus Pro</b> via l'API PISTE. "
+            "Vos identifiants sandbox sont pré-configurés dans <code>secrets.toml</code>.</p>",
             unsafe_allow_html=True,
         )
 
-        api_src = st.radio("Source", ["Chorus Pro (Sandbox)", "Sage", "SAP", "API personnalisée"],
-                           horizontal=True, key="api_src")
+        api_src = st.radio(
+            "Source",
+            ["Chorus Pro (PISTE)", "API personnalisée"],
+            horizontal=True,
+            key="api_src",
+        )
 
-        if api_src == "Chorus Pro (Sandbox)":
-            st.info("Connecteur **Chorus Pro PISTE** — Synchronisation des factures reçues.")
-            
-            # PISTE Credentials
+        if api_src == "Chorus Pro (PISTE)":
+            # Status banner
+            st.markdown(
+                '<div style="background:#EFF6FF;border-left:4px solid #1A56DB;'
+                'border-radius:6px;padding:10px 14px;font-size:.82rem;margin-bottom:12px">'
+                '🔐 <b>Application PISTE</b> : APP_SANDBOX_youssefelgarne906@gmail.com &nbsp;|&nbsp; '
+                '<b>Environnement</b> : SANDBOX &nbsp;|&nbsp; '
+                '<b>API souscrite</b> : Factures v1.0.0</div>',
+                unsafe_allow_html=True,
+            )
+
+            # ── Credentials PISTE ──
+            st.markdown("**Identifiants OAuth2 PISTE**")
             c1, c2 = st.columns(2)
-            c_id = c1.text_input("Client ID PISTE", placeholder="piste-...", key="chorus_id")
-            c_secret = c2.text_input("Client Secret PISTE", type="password", key="chorus_secret")
-            
-            # Chorus Technical Account (cpro-account)
-            st.markdown("**Compte Technique Chorus Pro**")
-            c3, c4 = st.columns(2)
-            cp_login = c3.text_input("Login (Utilisateur)", placeholder="login_tech", key="chorus_login")
-            cp_pass = c4.text_input("Mot de passe", type="password", key="chorus_pass")
-            
-            siret = st.text_input("SIRET Destinataire", placeholder="12345678900010", key="chorus_siret")
-            
-            sc1, sc2 = st.columns(2)
-            btn_sync = sc1.button("🔄 Synchroniser Chorus", use_container_width=True)
-            btn_demo = sc2.button("🧪 Mode Démo (Sans API)", use_container_width=True)
-            
-            if btn_sync:
-                if not c_id or not c_secret or not cp_login or not cp_pass or not siret:
-                    st.warning("Veuillez remplir tous les identifiants PISTE et Chorus Pro.")
+            c_id     = c1.text_input("Client ID", value=_default_id, key="chorus_id")
+            c_secret = c2.text_input("Client Secret", value=_default_secret,
+                                     type="password", key="chorus_secret")
+
+            # ── Compte Technique Chorus (optionnel pour rechercher/recipiendaire) ──
+            with st.expander("Compte Technique Chorus Pro (optionnel)", expanded=False):
+                st.caption("Nécessaire uniquement pour les API qui requièrent le header `cpro-account`.")
+                c3, c4 = st.columns(2)
+                cp_login = c3.text_input("Login technique", placeholder="login_tech", key="chorus_login")
+                cp_pass  = c4.text_input("Mot de passe technique", type="password", key="chorus_pass")
+
+            siret = st.text_input(
+                "SIRET Destinataire",
+                placeholder="12345678900010",
+                key="chorus_siret",
+                help="SIRET de votre structure pour récupérer les factures reçues.",
+            )
+
+            # ── Connection status display ──
+            if "chorus_conn_status" in st.session_state:
+                s = st.session_state["chorus_conn_status"]
+                if s["ok"]:
+                    st.success(f"✅ {s['message']}")
                 else:
-                    chorus = ChorusProAPI(c_id, c_secret, cp_login, cp_pass)
+                    st.error(f"❌ {s['message']}")
+
+            # ── Action buttons ──
+            b1, b2, b3 = st.columns(3)
+            btn_test  = b1.button("🔌 Tester la connexion", use_container_width=True)
+            btn_sync  = b2.button("🔄 Synchroniser les factures", use_container_width=True)
+            btn_demo  = b3.button("🧪 Mode Démo", use_container_width=True,
+                                  help="Importe des factures fictives sans appel API")
+
+            if btn_test:
+                if not c_id or not c_secret:
+                    st.warning("Renseignez le Client ID et le Client Secret.")
+                else:
+                    with st.spinner("Test de connexion PISTE..."):
+                        chorus = ChorusProAPI(c_id, c_secret,
+                                             cp_login if cp_login else "",
+                                             cp_pass  if cp_pass  else "",
+                                             mode=_default_mode)
+                        result = chorus.test_connection()
+                    st.session_state["chorus_conn_status"] = result
+                    st.rerun()
+
+            if btn_sync:
+                if not c_id or not c_secret:
+                    st.warning("Renseignez au minimum le Client ID et le Client Secret.")
+                elif not siret.strip():
+                    st.warning("Le SIRET Destinataire est requis pour la synchronisation.")
+                else:
+                    chorus = ChorusProAPI(c_id, c_secret,
+                                         cp_login if cp_login else "",
+                                         cp_pass  if cp_pass  else "",
+                                         mode=_default_mode)
                     with st.spinner("Connexion à Chorus Pro Sandbox..."):
-                        invoices = chorus.fetch_received_invoices(siret)
-                        # Process invoices...
+                        token = chorus.get_token()
+                    if token:
+                        st.session_state["chorus_conn_status"] = {"ok": True, "message": "Token PISTE obtenu."}
+                        with st.spinner("Récupération des factures..."):
+                            invoices = chorus.fetch_received_invoices(siret.strip())
                         if not invoices:
-                            st.info("Aucune facture trouvée. Utilisez le 'Mode Démo' pour tester l'affichage.")
+                            st.info("Aucune facture trouvée dans le Sandbox. "
+                                    "Utilisez **Mode Démo** pour tester l'affichage.")
                         else:
                             _process_and_save_invoices(invoices)
+                    else:
+                        st.session_state["chorus_conn_status"] = {"ok": False, "message": "Échec d'authentification PISTE."}
+                        st.rerun()
 
             if btn_demo:
-                chorus = ChorusProAPI("demo", "demo", "demo", "demo")
+                chorus = ChorusProAPI("demo", "demo")
                 invoices = chorus.fetch_mock_data()
                 _process_and_save_invoices(invoices)
-                st.success("✅ Données de démonstration importées avec succès.")
 
         elif api_src == "API personnalisée":
-            api_url = st.text_input("URL endpoint (GET)", placeholder="https://erp.exemple.com/api/invoices")
-            api_key = st.text_input("API Key (Bearer)", type="password", placeholder="sk-…")
-        else:
-            st.info(f"Connecteur **{api_src}** — entrez vos credentials ci-dessous.")
-            st.text_input("Identifiant", key="api_user")
-            st.text_input("Mot de passe", type="password", key="api_pass")
+            api_url = st.text_input("URL endpoint (GET)",
+                                    placeholder="https://erp.exemple.com/api/invoices",
+                                    key="custom_api_url")
+            api_bearer = st.text_input("API Key / Bearer Token", type="password",
+                                       placeholder="sk-…", key="custom_api_key")
+            if st.button("📥 Récupérer les factures", key="btn_custom_api"):
+                if not api_url.strip():
+                    st.warning("Renseignez l'URL de l'endpoint.")
+                else:
+                    try:
+                        hdrs = {"Accept": "application/json"}
+                        if api_bearer.strip():
+                            hdrs["Authorization"] = f"Bearer {api_bearer.strip()}"
+                        import requests as _req
+                        resp = _req.get(api_url.strip(), headers=hdrs, timeout=15)
+                        resp.raise_for_status()
+                        records = resp.json()
+                        if isinstance(records, dict):
+                            records = records.get("data", records.get("invoices", [records]))
+                        st.success(f"{len(records)} enregistrement(s) reçu(s).")
+                        st.json(records[:3])
+                    except Exception as exc:
+                        st.error(f"Erreur API : {exc}")
 
         st.markdown("**Ou collez une réponse JSON** (tableau de factures) :")
         json_raw = st.text_area("JSON", height=140, placeholder='[{"invoice_type":"CUSTOMER", ...}]',
