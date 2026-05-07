@@ -274,82 +274,158 @@ def render(now: datetime) -> None:
             except Exception as exc:
                 st.error(f"Impossible de lire le fichier : {exc}")
 
-    # ── Tab 3 : API / ERP ─────────────────────────────────────────────────────
+    # ── Tab 3 : Chorus Pro ────────────────────────────────────────────────────
     with tab_api:
+        import requests as _req
+        import base64, json as _json
+
         st.markdown(
-            '<p style="font-size:.82rem;color:#64748B;margin-bottom:14px">'
-            "Synchronisez les factures depuis votre ERP ou votre API comptable. "
-            "Collez une réponse JSON ou configurez un endpoint.</p>",
+            '<p style="font-size:.82rem;color:#64748B;margin-bottom:4px">'
+            "Connectez-vous à <b>Chorus Pro</b> via la plateforme PISTE pour synchroniser "
+            "automatiquement vos factures fournisseurs.</p>",
             unsafe_allow_html=True,
         )
 
-        api_src = st.radio("Source", ["Sage", "SAP", "Cegid", "API personnalisée"],
-                           horizontal=True, key="api_src")
+        with st.expander("ℹ️ Comment obtenir mes identifiants Chorus Pro ?", expanded=False):
+            st.markdown(
+                """
+**Compte technique Chorus Pro** (`chorus-pro.gouv.fr`)
 
-        if api_src == "API personnalisée":
-            api_url = st.text_input("URL endpoint (GET)",
-                                    placeholder="https://erp.exemple.com/api/invoices",
-                                    key="custom_api_url")
-            api_bearer = st.text_input("API Key / Bearer Token", type="password",
-                                       placeholder="sk-…", key="custom_api_key")
-            if st.button("📥 Récupérer les factures", key="btn_custom_api"):
-                if not api_url.strip():
-                    st.warning("Renseignez l'URL de l'endpoint.")
-                else:
-                    try:
-                        hdrs = {"Accept": "application/json"}
-                        if api_bearer.strip():
-                            hdrs["Authorization"] = f"Bearer {api_bearer.strip()}"
-                        import requests as _req
-                        resp = _req.get(api_url.strip(), headers=hdrs, timeout=15)
-                        resp.raise_for_status()
-                        records = resp.json()
-                        if isinstance(records, dict):
-                            records = records.get("data", records.get("invoices", [records]))
-                        st.success(f"{len(records)} enregistrement(s) reçu(s).")
-                        st.json(records[:3])
-                    except Exception as exc:
-                        st.error(f"Erreur API : {exc}")
+1. Connectez-vous au portail Chorus Pro
+2. Depuis l'accueil : **Raccordement** → **Compte technique** → *Création d'un compte technique*
+3. Sélectionnez votre structure via le champ **"Choisir la structure"**
+4. Cliquez sur **Soumettre** — le compte est créé sous 30 minutes
+5. Utilisez le **login** et **mot de passe** reçus dans le formulaire ci-dessous
 
-        st.markdown("**Ou collez une réponse JSON** (tableau de factures) :")
-        json_raw = st.text_area("JSON", height=140, placeholder='[{"invoice_type":"CUSTOMER", ...}]',
-                                key="api_json")
+> Pour l'environnement de qualification (sandbox), utilisez `qualif.chorus-pro.gouv.fr`
+                """
+            )
 
-        if st.button("🔄 Importer depuis JSON", key="btn_import_json"):
-            if not json_raw.strip():
-                st.warning("Collez un JSON valide.")
+        st.markdown("#### 🔐 Connexion Chorus Pro")
+
+        piste_cfg    = st.secrets.get("piste", {})
+        piste_id     = piste_cfg.get("client_id", "")
+        piste_secret = piste_cfg.get("client_secret", "")
+        is_sandbox   = piste_cfg.get("mode", "sandbox") != "production"
+
+        col1, col2 = st.columns(2)
+        with col1:
+            chorus_login = st.text_input("Login compte technique Chorus Pro",
+                                         key="chorus_login",
+                                         placeholder="ex : CPT_MON_COMPTE")
+        with col2:
+            chorus_pwd = st.text_input("Mot de passe compte technique",
+                                       key="chorus_pwd", type="password")
+
+        st.markdown("#### 📅 Période de recherche")
+        dc1, dc2 = st.columns(2)
+        date_du = dc1.date_input("Du",  value=date.today() - timedelta(days=90), key="chorus_date_du")
+        date_au = dc2.date_input("Au",  value=date.today(),                      key="chorus_date_au")
+
+        if st.button("🔄 Synchroniser les factures Chorus Pro", key="btn_chorus_sync",
+                     use_container_width=True):
+            missing = []
+            if not piste_id.strip():     missing.append("Client ID PISTE")
+            if not piste_secret.strip(): missing.append("Client Secret PISTE")
+            if not chorus_login.strip(): missing.append("Login compte technique")
+            if not chorus_pwd.strip():   missing.append("Mot de passe compte technique")
+            if missing:
+                st.warning(f"Champs obligatoires manquants : {', '.join(missing)}")
             else:
-                try:
-                    import json
-                    records = json.loads(json_raw)
-                    if isinstance(records, dict):
-                        records = [records]
-                    saved, errors_api = 0, []
-                    for i, rec in enumerate(records):
+                # ── Étape 1 : token PISTE ──────────────────────────────────────
+                oauth_url = (
+                    "https://sandbox-oauth.piste.gouv.fr/api/oauth/token"
+                    if is_sandbox else
+                    "https://oauth.piste.gouv.fr/api/oauth/token"
+                )
+                with st.spinner("Connexion à PISTE en cours…"):
+                    try:
+                        tok_resp = _req.post(
+                            oauth_url,
+                            data={
+                                "grant_type":    "client_credentials",
+                                "client_id":     piste_id.strip(),
+                                "client_secret": piste_secret.strip(),
+                            },
+                            headers={"Content-Type": "application/x-www-form-urlencoded"},
+                            timeout=15,
+                        )
+                        tok_resp.raise_for_status()
+                        token = tok_resp.json()["access_token"]
+                        st.success("Token PISTE obtenu ✅")
+                    except Exception as exc:
+                        st.error(f"Échec de l'authentification PISTE : {exc}")
+                        st.stop()
+
+                # ── Étape 2 : appel Chorus Pro ────────────────────────────────
+                api_base = (
+                    "https://sandbox-api.piste.gouv.fr/cpro/factures/v1"
+                    if is_sandbox else
+                    "https://api.piste.gouv.fr/cpro/factures/v1"
+                )
+                cpro_account = base64.b64encode(
+                    f"{chorus_login.strip()}:{chorus_pwd}".encode()
+                ).decode()
+
+                body = {
+                    "rechercheFactureParFournisseur": {
+                        "pageResultatDemandee": 1,
+                        "nbResultatsParPage":   50,
+                    },
+                    "periodeDateDepotDu": str(date_du),
+                    "periodeDateDepotAu": str(date_au),
+                }
+
+                with st.spinner("Récupération des factures Chorus Pro…"):
+                    try:
+                        api_resp = _req.post(
+                            f"{api_base}/rechercher/fournisseur",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Content-Type":  "application/json",
+                                "cpro-account":  cpro_account,
+                            },
+                            json=body,
+                            timeout=30,
+                        )
+                        api_resp.raise_for_status()
+                        data = api_resp.json()
+                    except Exception as exc:
+                        st.error(f"Erreur Chorus Pro ({api_resp.status_code if 'api_resp' in dir() else '?'}) : {exc}")
+                        if "api_resp" in dir():
+                            st.code(api_resp.text, language="json")
+                        st.stop()
+
+                factures_raw = data.get("listeFactures", [])
+                if not factures_raw:
+                    st.info("Aucune facture trouvée pour la période sélectionnée.")
+                else:
+                    saved, errors_c = 0, []
+                    for fac in factures_raw:
                         try:
-                            num = str(rec.get("invoice_number", "")).strip() or \
-                                  _next_invoice_number(str(rec.get("invoice_type", "CUSTOMER")))
                             _save_invoice(
-                                number      = num,
-                                inv_type    = str(rec.get("invoice_type", "CUSTOMER")).upper(),
-                                counterparty= str(rec.get("counterparty_name", rec.get("tiers", ""))),
-                                amount      = float(rec.get("amount_ttc", rec.get("amount", 0))),
-                                currency    = str(rec.get("currency", "EUR")).upper(),
-                                issue_dt    = pd.to_datetime(rec.get("issue_date", str(date.today()))).date(),
-                                due_dt      = pd.to_datetime(rec.get("due_date", str(date.today()))).date(),
-                                product     = str(rec.get("product", "")),
-                                quantity    = int(rec.get("quantity", 0)),
-                                note        = str(rec.get("note", "")),
+                                number       = str(fac.get("numeroFacture", "")),
+                                inv_type     = "SUPPLIER",
+                                counterparty = str(fac.get("designationFournisseur",
+                                                           fac.get("siretFournisseur", "Chorus Pro"))),
+                                amount       = float(fac.get("montantTTC", 0)),
+                                currency     = "EUR",
+                                issue_dt     = pd.to_datetime(
+                                    fac.get("dateDepot", str(date.today()))
+                                ).date(),
+                                due_dt       = pd.to_datetime(
+                                    fac.get("dateEcheancePaiement",
+                                            fac.get("dateDepot", str(date.today())))
+                                ).date(),
+                                note         = f"Chorus Pro · statut : {fac.get('statutFacture', '')}",
                             )
                             saved += 1
                         except Exception as exc:
-                            errors_api.append(f"Enregistrement {i + 1} : {exc}")
+                            errors_c.append(str(exc))
                     if saved:
-                        st.success(f"✅ {saved} facture(s) importée(s) depuis le JSON.")
-                    for e in errors_api:
+                        st.success(f"✅ {saved} facture(s) importée(s) depuis Chorus Pro.")
+                    for e in errors_c:
                         st.warning(e)
-                except Exception as exc:
-                    st.error(f"JSON invalide : {exc}")
 
     # ── Invoice schedule ──────────────────────────────────────────────────────
     st.markdown("---")

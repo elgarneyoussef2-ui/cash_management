@@ -3,4 +3,5 @@ __pycache__/
 .vscode/
 venv/
 .env
+.streamlit/secrets.toml
 # treasury_master.xlsx (removed from ignore to allow pushing database)
