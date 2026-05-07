@@ -277,26 +277,6 @@ def render(now: datetime) -> None:
     # ── Tab 3 : Chorus Pro ────────────────────────────────────────────────────
     with tab_api:
         from utils.chorus_client import get_token, fetch_factures_fournisseur, fetch_factures_recipiendaire
-
-        st.markdown(
-            '<p style="font-size:.82rem;color:#64748B;margin-bottom:4px">'
-            "Connectez-vous à <b>Chorus Pro</b> pour synchroniser automatiquement "
-            "vos factures. En cas d'erreur, les données Excel sont conservées.</p>",
-            unsafe_allow_html=True,
-        )
-
-        with st.expander("ℹ️ Comment obtenir mes identifiants ?", expanded=False):
-            st.markdown(
-                """
-**Compte technique Chorus Pro** (`chorus-pro.gouv.fr`)
-
-1. Connectez-vous au portail Chorus Pro
-2. Accueil → **Raccordement** → **Compte technique** → *Création d'un compte technique*
-3. Sélectionnez votre structure, cliquez **Soumettre** (délai : ~30 min)
-4. Utilisez le login et mot de passe reçus ci-dessous
-                """
-            )
-
         col1, col2 = st.columns(2)
         with col1:
             chorus_login = st.text_input("Login Chorus Pro", key="chorus_login",
