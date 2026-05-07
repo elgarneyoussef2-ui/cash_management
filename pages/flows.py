@@ -140,7 +140,7 @@ def render(now: datetime) -> None:
     st.markdown("---")
     st.markdown("#### ➕ Ajouter des Factures")
 
-    tab_manuel, tab_fichier, tab_api = st.tabs(["✏️ Saisie manuelle", "📁 Importation fichier", "🔗 API / ERP"])
+    tab_manuel, tab_fichier, tab_api = st.tabs(["✏️ Saisie manuelle", "📁 Importation fichier", "🔗 API"])
 
     # ── Tab 1 : manual entry ──────────────────────────────────────────────────
     with tab_manuel:
