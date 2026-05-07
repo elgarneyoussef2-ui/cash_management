@@ -303,10 +303,17 @@ def render(now: datetime) -> None:
 
         st.markdown("#### 🔐 Connexion Chorus Pro")
 
-        piste_cfg    = st.secrets.get("piste", {})
-        piste_id     = piste_cfg.get("client_id", "")
-        piste_secret = piste_cfg.get("client_secret", "")
-        is_sandbox   = piste_cfg.get("mode", "sandbox") != "production"
+        _PISTE_ID     = "a42ee586-cdae-49b5-b395-c288ba46aeb7"
+        _PISTE_SECRET = "de098e2c-d342-475b-80c8-05e5bd75ca59"
+        _IS_SANDBOX   = True
+
+        try:
+            _cfg          = st.secrets.get("piste", {})
+            piste_id      = _cfg.get("client_id",     _PISTE_ID)
+            piste_secret  = _cfg.get("client_secret", _PISTE_SECRET)
+            is_sandbox    = _cfg.get("mode", "sandbox") != "production"
+        except Exception:
+            piste_id, piste_secret, is_sandbox = _PISTE_ID, _PISTE_SECRET, _IS_SANDBOX
 
         col1, col2 = st.columns(2)
         with col1:
