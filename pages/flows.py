@@ -276,7 +276,7 @@ def render(now: datetime) -> None:
 
     # ── Tab 3 : Chorus Pro ────────────────────────────────────────────────────
     with tab_api:
-        from utils.chorus_client import fetch_factures_fournisseur, fetch_factures_recipiendaire
+        from utils.chorus_client import get_token, fetch_factures_fournisseur, fetch_factures_recipiendaire
 
         st.markdown(
             '<p style="font-size:.82rem;color:#64748B;margin-bottom:4px">'
@@ -316,68 +316,80 @@ def render(now: datetime) -> None:
                 saved_f = saved_r = 0
                 errors_sync = []
 
-                with st.spinner("Récupération des factures fournisseur…"):
+                with st.spinner("Connexion à PISTE…"):
                     try:
-                        factures_f = fetch_factures_fournisseur(
-                            chorus_login.strip(), chorus_pwd,
-                            date_du, date_au,
-                        )
-                        for fac in factures_f:
-                            try:
-                                _save_invoice(
-                                    number       = str(fac.get("numeroFacture", "")),
-                                    inv_type     = "CUSTOMER",
-                                    counterparty = str(fac.get("designationDestinataire",
-                                                               fac.get("siretDestinataire", "Chorus Pro"))),
-                                    amount       = float(fac.get("montantTTC", 0)),
-                                    currency     = "EUR",
-                                    issue_dt     = pd.to_datetime(fac.get("dateDepot", str(date.today()))).date(),
-                                    due_dt       = pd.to_datetime(fac.get("dateEcheancePaiement",
-                                                                          fac.get("dateDepot", str(date.today())))).date(),
-                                    note         = f"Chorus Pro · {fac.get('statutFacture', '')}",
-                                )
-                                saved_f += 1
-                            except Exception as exc:
-                                errors_sync.append(str(exc))
+                        piste_token = get_token()
                     except Exception as exc:
-                        st.error(f"Erreur factures fournisseur : {exc} — données Excel conservées.")
+                        st.error(f"Token PISTE : échec — {exc}. Données Excel conservées.")
+                        piste_token = None
 
-                with st.spinner("Récupération des factures reçues…"):
-                    try:
-                        factures_r = fetch_factures_recipiendaire(
-                            chorus_login.strip(), chorus_pwd,
-                            date_du, date_au,
+                if piste_token is None:
+                    pass
+                else:
+                    st.success("Token PISTE obtenu ✅")
+
+                    with st.spinner("Récupération des factures émises…"):
+                        try:
+                            factures_f = fetch_factures_fournisseur(
+                                chorus_login.strip(), chorus_pwd,
+                                date_du, date_au, token=piste_token,
+                            )
+                            for fac in factures_f:
+                                try:
+                                    _save_invoice(
+                                        number       = str(fac.get("numeroFacture", "")),
+                                        inv_type     = "CUSTOMER",
+                                        counterparty = str(fac.get("designationDestinataire",
+                                                                   fac.get("siretDestinataire", "Chorus Pro"))),
+                                        amount       = float(fac.get("montantTTC", 0)),
+                                        currency     = "EUR",
+                                        issue_dt     = pd.to_datetime(fac.get("dateDepot", str(date.today()))).date(),
+                                        due_dt       = pd.to_datetime(fac.get("dateEcheancePaiement",
+                                                                              fac.get("dateDepot", str(date.today())))).date(),
+                                        note         = f"Chorus Pro · {fac.get('statutFacture', '')}",
+                                    )
+                                    saved_f += 1
+                                except Exception as exc:
+                                    errors_sync.append(str(exc))
+                        except Exception as exc:
+                            st.error(f"Token PISTE obtenu ✅ — Erreur factures émises : {exc}. Données Excel conservées.")
+
+                    with st.spinner("Récupération des factures reçues…"):
+                        try:
+                            factures_r = fetch_factures_recipiendaire(
+                                chorus_login.strip(), chorus_pwd,
+                                date_du, date_au, token=piste_token,
+                            )
+                            for fac in factures_r:
+                                try:
+                                    _save_invoice(
+                                        number       = str(fac.get("numeroFacture", "")),
+                                        inv_type     = "SUPPLIER",
+                                        counterparty = str(fac.get("designationFournisseur",
+                                                                   fac.get("siretFournisseur", "Chorus Pro"))),
+                                        amount       = float(fac.get("montantTTC", 0)),
+                                        currency     = "EUR",
+                                        issue_dt     = pd.to_datetime(fac.get("dateDepot", str(date.today()))).date(),
+                                        due_dt       = pd.to_datetime(fac.get("dateEcheancePaiement",
+                                                                              fac.get("dateDepot", str(date.today())))).date(),
+                                        note         = f"Chorus Pro · {fac.get('statutFacture', '')}",
+                                    )
+                                    saved_r += 1
+                                except Exception as exc:
+                                    errors_sync.append(str(exc))
+                        except Exception as exc:
+                            st.error(f"Token PISTE obtenu ✅ — Erreur factures reçues : {exc}. Données Excel conservées.")
+
+                    total = saved_f + saved_r
+                    if total:
+                        st.success(
+                            f"✅ {total} facture(s) importée(s) — "
+                            f"{saved_f} émises (créances) · {saved_r} reçues (dettes). "
+                            "Métriques BFR recalculées."
                         )
-                        for fac in factures_r:
-                            try:
-                                _save_invoice(
-                                    number       = str(fac.get("numeroFacture", "")),
-                                    inv_type     = "SUPPLIER",
-                                    counterparty = str(fac.get("designationFournisseur",
-                                                               fac.get("siretFournisseur", "Chorus Pro"))),
-                                    amount       = float(fac.get("montantTTC", 0)),
-                                    currency     = "EUR",
-                                    issue_dt     = pd.to_datetime(fac.get("dateDepot", str(date.today()))).date(),
-                                    due_dt       = pd.to_datetime(fac.get("dateEcheancePaiement",
-                                                                          fac.get("dateDepot", str(date.today())))).date(),
-                                    note         = f"Chorus Pro · {fac.get('statutFacture', '')}",
-                                )
-                                saved_r += 1
-                            except Exception as exc:
-                                errors_sync.append(str(exc))
-                    except Exception as exc:
-                        st.error(f"Erreur factures reçues : {exc} — données Excel conservées.")
-
-                total = saved_f + saved_r
-                if total:
-                    st.success(
-                        f"✅ {total} facture(s) importée(s) — "
-                        f"{saved_f} émises (créances) · {saved_r} reçues (dettes). "
-                        f"Les métriques BFR ont été recalculées."
-                    )
-                    st.rerun()
-                for e in errors_sync:
-                    st.warning(e)
+                        st.rerun()
+                    for e in errors_sync:
+                        st.warning(e)
 
     # ── Invoice schedule ──────────────────────────────────────────────────────
     st.markdown("---")

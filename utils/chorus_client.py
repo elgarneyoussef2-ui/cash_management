@@ -18,7 +18,7 @@ def _endpoints(sandbox):
     )
 
 
-def _get_token(sandbox=_SANDBOX):
+def get_token(sandbox=_SANDBOX):
     oauth_url, _ = _endpoints(sandbox)
     r = requests.post(
         oauth_url,
@@ -40,9 +40,9 @@ def _headers(token, login, password):
     }
 
 
-def fetch_factures_fournisseur(login, password, date_du, date_au, sandbox=_SANDBOX):
+def fetch_factures_fournisseur(login, password, date_du, date_au, sandbox=_SANDBOX, token=None):
     """Factures émises par le fournisseur connecté → créances clients."""
-    token = _get_token(sandbox)
+    token = token or get_token(sandbox)
     _, base = _endpoints(sandbox)
     r = requests.post(
         f"{base}/rechercher/fournisseur",
@@ -61,9 +61,9 @@ def fetch_factures_fournisseur(login, password, date_du, date_au, sandbox=_SANDB
     return r.json().get("listeFactures", [])
 
 
-def fetch_factures_recipiendaire(login, password, date_du, date_au, sandbox=_SANDBOX):
+def fetch_factures_recipiendaire(login, password, date_du, date_au, sandbox=_SANDBOX, token=None):
     """Factures reçues par le destinataire connecté → dettes fournisseurs."""
-    token = _get_token(sandbox)
+    token = token or get_token(sandbox)
     _, base = _endpoints(sandbox)
     r = requests.post(
         f"{base}/rechercher/recipiendaire",
