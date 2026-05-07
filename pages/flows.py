@@ -276,163 +276,108 @@ def render(now: datetime) -> None:
 
     # ── Tab 3 : Chorus Pro ────────────────────────────────────────────────────
     with tab_api:
-        import requests as _req
-        import base64, json as _json
+        from utils.chorus_client import fetch_factures_fournisseur, fetch_factures_recipiendaire
 
         st.markdown(
             '<p style="font-size:.82rem;color:#64748B;margin-bottom:4px">'
-            "Connectez-vous à <b>Chorus Pro</b> via la plateforme PISTE pour synchroniser "
-            "automatiquement vos factures fournisseurs.</p>",
+            "Connectez-vous à <b>Chorus Pro</b> pour synchroniser automatiquement "
+            "vos factures. En cas d'erreur, les données Excel sont conservées.</p>",
             unsafe_allow_html=True,
         )
 
-        with st.expander("ℹ️ Comment obtenir mes identifiants Chorus Pro ?", expanded=False):
+        with st.expander("ℹ️ Comment obtenir mes identifiants ?", expanded=False):
             st.markdown(
                 """
 **Compte technique Chorus Pro** (`chorus-pro.gouv.fr`)
 
 1. Connectez-vous au portail Chorus Pro
-2. Depuis l'accueil : **Raccordement** → **Compte technique** → *Création d'un compte technique*
-3. Sélectionnez votre structure via le champ **"Choisir la structure"**
-4. Cliquez sur **Soumettre** — le compte est créé sous 30 minutes
-5. Utilisez le **login** et **mot de passe** reçus dans le formulaire ci-dessous
-
-> Pour l'environnement de qualification (sandbox), utilisez `qualif.chorus-pro.gouv.fr`
+2. Accueil → **Raccordement** → **Compte technique** → *Création d'un compte technique*
+3. Sélectionnez votre structure, cliquez **Soumettre** (délai : ~30 min)
+4. Utilisez le login et mot de passe reçus ci-dessous
                 """
             )
 
-        st.markdown("#### 🔐 Connexion Chorus Pro")
-
-        _PISTE_ID     = "a42ee586-cdae-49b5-b395-c288ba46aeb7"
-        _PISTE_SECRET = "de098e2c-d342-475b-80c8-05e5bd75ca59"
-        _IS_SANDBOX   = True
-
-        try:
-            _cfg          = st.secrets.get("piste", {})
-            piste_id      = _cfg.get("client_id",     _PISTE_ID)
-            piste_secret  = _cfg.get("client_secret", _PISTE_SECRET)
-            is_sandbox    = _cfg.get("mode", "sandbox") != "production"
-        except Exception:
-            piste_id, piste_secret, is_sandbox = _PISTE_ID, _PISTE_SECRET, _IS_SANDBOX
-
         col1, col2 = st.columns(2)
         with col1:
-            chorus_login = st.text_input("Login compte technique Chorus Pro",
-                                         key="chorus_login",
-                                         placeholder="ex : CPT_MON_COMPTE")
+            chorus_login = st.text_input("Login Chorus Pro", key="chorus_login",
+                                         placeholder="ex : GEST_PRIVE_SIRET_…@cpro.fr")
         with col2:
-            chorus_pwd = st.text_input("Mot de passe compte technique",
-                                       key="chorus_pwd", type="password")
+            chorus_pwd = st.text_input("Mot de passe", key="chorus_pwd", type="password")
 
-        st.markdown("#### 📅 Période de recherche")
         dc1, dc2 = st.columns(2)
-        date_du = dc1.date_input("Du",  value=date.today() - timedelta(days=90), key="chorus_date_du")
-        date_au = dc2.date_input("Au",  value=date.today(),                      key="chorus_date_au")
+        date_du = dc1.date_input("Du", value=date.today() - timedelta(days=90), key="chorus_date_du")
+        date_au = dc2.date_input("Au", value=date.today(), key="chorus_date_au")
 
-        if st.button("🔄 Synchroniser les factures Chorus Pro", key="btn_chorus_sync",
+        if st.button("🔄 Synchroniser depuis Chorus Pro", key="btn_chorus_sync",
                      use_container_width=True):
-            missing = []
-            if not piste_id.strip():     missing.append("Client ID PISTE")
-            if not piste_secret.strip(): missing.append("Client Secret PISTE")
-            if not chorus_login.strip(): missing.append("Login compte technique")
-            if not chorus_pwd.strip():   missing.append("Mot de passe compte technique")
-            if missing:
-                st.warning(f"Champs obligatoires manquants : {', '.join(missing)}")
+            if not chorus_login.strip() or not chorus_pwd.strip():
+                st.warning("Renseignez votre login et mot de passe Chorus Pro.")
             else:
-                # ── Étape 1 : token PISTE ──────────────────────────────────────
-                oauth_url = (
-                    "https://sandbox-oauth.piste.gouv.fr/api/oauth/token"
-                    if is_sandbox else
-                    "https://oauth.piste.gouv.fr/api/oauth/token"
-                )
-                with st.spinner("Connexion à PISTE en cours…"):
+                saved_f = saved_r = 0
+                errors_sync = []
+
+                with st.spinner("Récupération des factures fournisseur…"):
                     try:
-                        tok_resp = _req.post(
-                            oauth_url,
-                            data={
-                                "grant_type":    "client_credentials",
-                                "client_id":     piste_id.strip(),
-                                "client_secret": piste_secret.strip(),
-                            },
-                            headers={"Content-Type": "application/x-www-form-urlencoded"},
-                            timeout=15,
+                        factures_f = fetch_factures_fournisseur(
+                            chorus_login.strip(), chorus_pwd,
+                            date_du, date_au,
                         )
-                        tok_resp.raise_for_status()
-                        token = tok_resp.json()["access_token"]
-                        st.success("Token PISTE obtenu ✅")
+                        for fac in factures_f:
+                            try:
+                                _save_invoice(
+                                    number       = str(fac.get("numeroFacture", "")),
+                                    inv_type     = "CUSTOMER",
+                                    counterparty = str(fac.get("designationDestinataire",
+                                                               fac.get("siretDestinataire", "Chorus Pro"))),
+                                    amount       = float(fac.get("montantTTC", 0)),
+                                    currency     = "EUR",
+                                    issue_dt     = pd.to_datetime(fac.get("dateDepot", str(date.today()))).date(),
+                                    due_dt       = pd.to_datetime(fac.get("dateEcheancePaiement",
+                                                                          fac.get("dateDepot", str(date.today())))).date(),
+                                    note         = f"Chorus Pro · {fac.get('statutFacture', '')}",
+                                )
+                                saved_f += 1
+                            except Exception as exc:
+                                errors_sync.append(str(exc))
                     except Exception as exc:
-                        st.error(f"Échec de l'authentification PISTE : {exc}")
-                        st.stop()
+                        st.error(f"Erreur factures fournisseur : {exc} — données Excel conservées.")
 
-                # ── Étape 2 : appel Chorus Pro ────────────────────────────────
-                api_base = (
-                    "https://sandbox-api.piste.gouv.fr/cpro/factures/v1"
-                    if is_sandbox else
-                    "https://api.piste.gouv.fr/cpro/factures/v1"
-                )
-                cpro_account = base64.b64encode(
-                    f"{chorus_login.strip()}:{chorus_pwd}".encode()
-                ).decode()
-
-                body = {
-                    "rechercheFactureParFournisseur": {
-                        "pageResultatDemandee": 1,
-                        "nbResultatsParPage":   50,
-                    },
-                    "periodeDateDepotDu": str(date_du),
-                    "periodeDateDepotAu": str(date_au),
-                }
-
-                with st.spinner("Récupération des factures Chorus Pro…"):
+                with st.spinner("Récupération des factures reçues…"):
                     try:
-                        api_resp = _req.post(
-                            f"{api_base}/rechercher/fournisseur",
-                            headers={
-                                "Authorization": f"Bearer {token}",
-                                "Content-Type":  "application/json",
-                                "cpro-account":  cpro_account,
-                            },
-                            json=body,
-                            timeout=30,
+                        factures_r = fetch_factures_recipiendaire(
+                            chorus_login.strip(), chorus_pwd,
+                            date_du, date_au,
                         )
-                        api_resp.raise_for_status()
-                        data = api_resp.json()
+                        for fac in factures_r:
+                            try:
+                                _save_invoice(
+                                    number       = str(fac.get("numeroFacture", "")),
+                                    inv_type     = "SUPPLIER",
+                                    counterparty = str(fac.get("designationFournisseur",
+                                                               fac.get("siretFournisseur", "Chorus Pro"))),
+                                    amount       = float(fac.get("montantTTC", 0)),
+                                    currency     = "EUR",
+                                    issue_dt     = pd.to_datetime(fac.get("dateDepot", str(date.today()))).date(),
+                                    due_dt       = pd.to_datetime(fac.get("dateEcheancePaiement",
+                                                                          fac.get("dateDepot", str(date.today())))).date(),
+                                    note         = f"Chorus Pro · {fac.get('statutFacture', '')}",
+                                )
+                                saved_r += 1
+                            except Exception as exc:
+                                errors_sync.append(str(exc))
                     except Exception as exc:
-                        st.error(f"Erreur Chorus Pro ({api_resp.status_code if 'api_resp' in dir() else '?'}) : {exc}")
-                        if "api_resp" in dir():
-                            st.code(api_resp.text, language="json")
-                        st.stop()
+                        st.error(f"Erreur factures reçues : {exc} — données Excel conservées.")
 
-                factures_raw = data.get("listeFactures", [])
-                if not factures_raw:
-                    st.info("Aucune facture trouvée pour la période sélectionnée.")
-                else:
-                    saved, errors_c = 0, []
-                    for fac in factures_raw:
-                        try:
-                            _save_invoice(
-                                number       = str(fac.get("numeroFacture", "")),
-                                inv_type     = "SUPPLIER",
-                                counterparty = str(fac.get("designationFournisseur",
-                                                           fac.get("siretFournisseur", "Chorus Pro"))),
-                                amount       = float(fac.get("montantTTC", 0)),
-                                currency     = "EUR",
-                                issue_dt     = pd.to_datetime(
-                                    fac.get("dateDepot", str(date.today()))
-                                ).date(),
-                                due_dt       = pd.to_datetime(
-                                    fac.get("dateEcheancePaiement",
-                                            fac.get("dateDepot", str(date.today())))
-                                ).date(),
-                                note         = f"Chorus Pro · statut : {fac.get('statutFacture', '')}",
-                            )
-                            saved += 1
-                        except Exception as exc:
-                            errors_c.append(str(exc))
-                    if saved:
-                        st.success(f"✅ {saved} facture(s) importée(s) depuis Chorus Pro.")
-                    for e in errors_c:
-                        st.warning(e)
+                total = saved_f + saved_r
+                if total:
+                    st.success(
+                        f"✅ {total} facture(s) importée(s) — "
+                        f"{saved_f} émises (créances) · {saved_r} reçues (dettes). "
+                        f"Les métriques BFR ont été recalculées."
+                    )
+                    st.rerun()
+                for e in errors_sync:
+                    st.warning(e)
 
     # ── Invoice schedule ──────────────────────────────────────────────────────
     st.markdown("---")
